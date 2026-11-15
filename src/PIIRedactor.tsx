@@ -1,3 +1,4 @@
+import ReactMarkdown from "react-markdown";
 import { useState, useEffect, type ChangeEvent } from "react";
 import {
   generateSOAPNote,
@@ -537,21 +538,56 @@ export default function PIIRedactor() {
               </span>
             )}
           </div>
-          <p
+
+          <div
             style={{
-              margin: 0,
+              flexGrow: 1,
               fontSize: "14px",
               lineHeight: "1.6",
               color: soapNote ? "#0f172a" : "#94a3b8",
-              whiteSpace: "pre-wrap",
-              flexGrow: 1,
             }}
           >
-            {soapNote ||
-              (engineState === "processing_cloud"
-                ? "Analyzing secured payload in Firebase AI..."
-                : "Awaiting secure payload...")}
-          </p>
+            {soapNote ? (
+              // react-markdown merender teks mentah menjadi HTML asli (bold, list, dll)
+              <ReactMarkdown
+                components={{
+                  h2: ({ node, ...props }) => (
+                    <h2
+                      style={{
+                        fontSize: "16px",
+                        margin: "0 0 12px 0",
+                        color: "#0c4a6e",
+                      }}
+                      {...props}
+                    />
+                  ),
+                  p: ({ node, ...props }) => (
+                    <p style={{ margin: "0 0 12px 0" }} {...props} />
+                  ),
+                  ul: ({ node, ...props }) => (
+                    <ul
+                      style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}
+                      {...props}
+                    />
+                  ),
+                  ol: ({ node, ...props }) => (
+                    <ol
+                      style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}
+                      {...props}
+                    />
+                  ),
+                }}
+              >
+                {soapNote}
+              </ReactMarkdown>
+            ) : (
+              <p style={{ margin: 0 }}>
+                {engineState === "processing_cloud"
+                  ? "Analyzing secured payload in Firebase AI..."
+                  : "Awaiting secure payload..."}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
