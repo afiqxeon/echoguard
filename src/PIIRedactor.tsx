@@ -24,6 +24,7 @@ export default function PIIRedactor() {
   const [redactedText, setRedactedText] = useState("");
   const [soapNote, setSoapNote] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
+  const [audioScript, setAudioScript] = useState<string>("");
 
   // Engine States & Metrics
   const [engineState, setEngineState] = useState<EngineStatus>("checking");
@@ -157,6 +158,7 @@ export default function PIIRedactor() {
     setRedactedText("");
     setSoapNote("");
     setAudioUrl("");
+    setAudioScript("");
     setTtftMs(null);
     setLocalLatencyMs(null);
 
@@ -210,8 +212,10 @@ export default function PIIRedactor() {
       setStatusMessage(
         "Step 3/3: Generating expressive multi-speaker audio via Firebase AI Logic...",
       );
-      const audioResult = await generateMedicalAudio(generatedSoap);
-      setAudioUrl(audioResult);
+      const { audioUrl: generatedAudioUrl, script } =
+        await generateMedicalAudio(generatedSoap);
+      setAudioUrl(generatedAudioUrl);
+      setAudioScript(script);
 
       setEngineState("ready");
       setStatusMessage(
@@ -233,6 +237,7 @@ export default function PIIRedactor() {
     setRedactedText("");
     setSoapNote("");
     setAudioUrl("");
+    setAudioScript("");
     setTtftMs(null);
     setLocalLatencyMs(null);
   };
@@ -639,6 +644,37 @@ export default function PIIRedactor() {
           >
             Your browser does not support the audio element.
           </audio>
+          {audioScript && (
+            <div
+              className="mt-3 p-3 bg-white/80 rounded-lg border border-pink-200 text-sm text-slate-700 whitespace-pre-line"
+              style={{
+                marginTop: "12px",
+                padding: "12px",
+                backgroundColor: "rgba(255, 255, 255, 0.85)",
+                borderRadius: "8px",
+                border: "1px solid #fbcfe8",
+                fontSize: "14px",
+                color: "#334155",
+                whiteSpace: "pre-line",
+                lineHeight: "1.5",
+              }}
+            >
+              <p
+                className="text-xs font-semibold text-pink-700 mb-1 uppercase tracking-wide"
+                style={{
+                  margin: "0 0 6px 0",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#be185d",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Spoken Handoff Script
+              </p>
+              {audioScript}
+            </div>
+          )}
         </div>
       )}
     </div>
