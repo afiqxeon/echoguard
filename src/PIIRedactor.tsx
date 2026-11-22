@@ -4,6 +4,9 @@ import {
   generateSOAPNote,
   generateMedicalAudio,
 } from "./services/firebaseHybrid";
+import { redactPIIDeterministically } from "./utils/deterministicRedactor";
+
+type LocalEngineMode = "checking" | "nano" | "deterministic";
 
 type EngineStatus =
   | "checking"
@@ -16,8 +19,7 @@ type EngineStatus =
   | "error";
 
 export default function PIIRedactor() {
-  const [session, setSession] = useState<any>(null);
-  const [useFallback, setUseFallback] = useState(false);
+  const [engineMode, setEngineMode] = useState<LocalEngineMode>("checking");
   const [input, setInput] = useState("");
 
   // Pipeline Outputs
@@ -36,120 +38,57 @@ export default function PIIRedactor() {
 
   useEffect(() => {
     let isMounted = true;
-    let activeSession: any = null;
 
-    async function initLocalModel() {
-      const win = window as any;
-      const systemPrompt =
-        "Replace all PII (names, DOB, phone numbers, addresses, insurance/ID numbers) with [REDACTED]. Keep all medical terms unchanged. Output ONLY the redacted text.";
-
+    async function initLocalEngine() {
       try {
-        if ("LanguageModel" in win) {
-          if (isMounted)
-            setStatusMessage("Verifying LanguageModel API availability...");
-
-          const modelOptions = {
-            expectedInputs: [{ type: "text", languages: ["en"] }],
-            expectedOutputs: [{ type: "text", languages: ["en"] }],
-          };
-
-          const availability =
-            await win.LanguageModel.availability(modelOptions);
-
-          if (availability !== "unavailable") {
-            if (isMounted) {
-              setEngineState("downloading");
-              setStatusMessage("Initializing local Gemini Nano session...");
-            }
-
-            activeSession = await win.LanguageModel.create({
-              ...modelOptions,
-              outputLanguage: "en",
-              temperature: 0,
-              topK: 1,
-              initialPrompts: [{ role: "system", content: systemPrompt }],
-              monitor(m: any) {
-                m.addEventListener("downloadprogress", (e: any) => {
-                  if (!isMounted) return;
-                  const percent = Math.round(e.loaded * 100);
-                  setEngineState("downloading");
-                  setStatusMessage(
-                    `Downloading on-device Gemini Nano weights: ${percent}%`,
-                  );
-                });
-              },
-            });
-
-            if (isMounted) {
-              setSession(activeSession);
-              setEngineState("ready");
-              setStatusMessage(
-                "Hybrid System Ready (Nano Local + Firebase Cloud)",
-              );
-            }
-            return;
-          }
-        }
-
-        if ("ai" in win && win.ai) {
-          if (isMounted)
-            setStatusMessage("Initializing local window.ai session...");
-          activeSession = win.ai.languageModel
-            ? await win.ai.languageModel.create({
-                systemPrompt,
-                temperature: 0,
-                topK: 1,
-              })
-            : await win.ai.createTextSession({ systemPrompt });
-
+        const languageModelApi = (window as any).LanguageModel;
+        if (!languageModelApi) {
           if (isMounted) {
-            setSession(activeSession);
-            setEngineState("ready");
-            setStatusMessage(
-              "Hybrid System Ready (Nano Local + Firebase Cloud)",
-            );
+            setEngineMode("deterministic");
+            setEngineState("fallback");
+            setStatusMessage("Deterministic Local Privacy Shield Active");
           }
           return;
         }
 
-        if (isMounted) {
-          setUseFallback(true);
-          setEngineState("fallback");
-          setStatusMessage(
-            "Chrome Built-in AI unavailable. Active: Regex Guardrail + Cloud.",
-          );
+        const availability =
+          typeof languageModelApi.availability === "function"
+            ? await languageModelApi.availability({
+                expectedOutputs: [{ type: "text", languages: ["en"] }],
+              })
+            : "unavailable";
+
+        if (availability === "available" || availability === "readily") {
+          if (isMounted) {
+            setEngineMode("nano");
+            setEngineState("ready");
+            setStatusMessage("Gemini Nano Ready (On-Device)");
+          }
+        } else {
+          if (isMounted) {
+            setEngineMode("deterministic");
+            setEngineState("fallback");
+            setStatusMessage("Deterministic Local Privacy Shield Active");
+          }
         }
       } catch (error) {
-        console.error("Local AI Initialization Error:", error);
+        console.warn(
+          "Chrome Built-in AI unavailable. Switching to Deterministic Local Privacy Shield:",
+          error,
+        );
         if (isMounted) {
-          setUseFallback(true);
+          setEngineMode("deterministic");
           setEngineState("fallback");
-          setStatusMessage(
-            "On-device model pending. Active: Regex Guardrail + Cloud.",
-          );
+          setStatusMessage("Deterministic Local Privacy Shield Active");
         }
       }
     }
 
-    initLocalModel();
-
+    initLocalEngine();
     return () => {
       isMounted = false;
-      if (activeSession && typeof activeSession.destroy === "function") {
-        activeSession.destroy();
-      }
     };
   }, []);
-
-  const redactWithDeterministicGuardrail = (text: string): string => {
-    return text
-      .replace(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g, "[REDACTED_NAME]")
-      .replace(
-        /\b\d{3}[-.\s]?\d{2,4}[-.\s]?\d{4}\b/g,
-        "[REDACTED_PHONE_OR_SSN]",
-      )
-      .replace(/\b[A-Z0-9]{6,}\b/g, "[REDACTED_ID]");
-  };
 
   const handleProcessPipeline = async () => {
     if (!input.trim()) return;
@@ -167,44 +106,84 @@ export default function PIIRedactor() {
     setStatusMessage("Step 1/3: Streaming PII redaction locally on-device...");
     const startTime = performance.now();
     let firstTokenRecorded = false;
-    let finalRedacted = "";
+
+    // Stage 1A: Deterministic Pre-Filter (guarantees structured PII is stripped in <2ms)
+    const preFiltered = redactPIIDeterministically(input);
+    let sanitizedPayload = preFiltered.redactedText;
 
     try {
-      if (session) {
-        if (typeof session.promptStreaming === "function") {
-          const stream = session.promptStreaming(input, {
-            outputLanguage: "en",
+      if (engineMode === "nano") {
+        try {
+          const nanoSession = await (window as any).LanguageModel.create({
+            temperature: 0,
+            topK: 1,
+            expectedOutputs: [{ type: "text", languages: ["en"] }],
+            initialPrompts: [
+              {
+                role: "system",
+                content:
+                  "You are a strict PII redaction engine. Return ONLY the original text with any remaining personal identifiers (names, addresses, dates of birth, IDs, phone numbers) replaced by [REDACTED]. Do NOT add explanations, markdown, bullet points, or medical advice.",
+              },
+            ],
           });
-          for await (const chunk of stream) {
-            if (!firstTokenRecorded) {
+
+          // Stage 1B: Semantic pass via Gemini Nano on already pre-filtered text
+          const nanoPrompt = `Redact any remaining personal identifiers in this text. Output ONLY the redacted text:\n\n${sanitizedPayload}`;
+          let nanoOutput = "";
+
+          try {
+            if (typeof nanoSession.promptStreaming === "function") {
+              const stream = nanoSession.promptStreaming(nanoPrompt, {
+                outputLanguage: "en",
+              });
+              for await (const chunk of stream) {
+                if (!firstTokenRecorded) {
+                  setTtftMs(Math.round(performance.now() - startTime));
+                  firstTokenRecorded = true;
+                }
+                nanoOutput =
+                  chunk.startsWith(nanoOutput) && nanoOutput.length > 0
+                    ? chunk
+                    : nanoOutput + chunk;
+                setRedactedText(nanoOutput);
+              }
+            } else {
+              nanoOutput = await nanoSession.prompt(nanoPrompt, {
+                outputLanguage: "en",
+              });
               setTtftMs(Math.round(performance.now() - startTime));
-              firstTokenRecorded = true;
+              setRedactedText(nanoOutput);
             }
-            finalRedacted =
-              chunk.startsWith(finalRedacted) && finalRedacted.length > 0
-                ? chunk
-                : finalRedacted + chunk;
-            setRedactedText(finalRedacted);
+          } finally {
+            if (typeof nanoSession.destroy === "function") {
+              nanoSession.destroy();
+            }
           }
-        } else {
-          finalRedacted = await session.prompt(input, { outputLanguage: "en" });
-          setTtftMs(Math.round(performance.now() - startTime));
-          setRedactedText(finalRedacted);
+
+          // Stage 1C: Post-Filter safety net
+          sanitizedPayload = redactPIIDeterministically(nanoOutput).redactedText;
+        } catch (nanoError) {
+          console.warn(
+            "Gemini Nano failed, retaining deterministic output:",
+            nanoError,
+          );
+          setEngineMode("deterministic");
         }
-      } else if (useFallback) {
-        finalRedacted = redactWithDeterministicGuardrail(input);
-        setTtftMs(Math.round(performance.now() - startTime));
-        setRedactedText(finalRedacted);
+      } else {
+        const elapsed = Math.round(performance.now() - startTime);
+        setTtftMs(elapsed);
+        setLocalLatencyMs(elapsed);
       }
 
       setLocalLatencyMs(Math.round(performance.now() - startTime));
+      setRedactedText(sanitizedPayload);
 
       // --- STEP 2: CLOUD INFERENCE (SOAP NOTE) ---
       setEngineState("processing_cloud");
       setStatusMessage(
         "Step 2/3: Routing secured payload to Firebase Cloud for SOAP synthesis...",
       );
-      const generatedSoap = await generateSOAPNote(finalRedacted);
+      const generatedSoap = await generateSOAPNote(sanitizedPayload);
       setSoapNote(generatedSoap);
 
       // --- STEP 3: CLOUD TTS (MULTI-SPEAKER AUDIO) ---
@@ -242,46 +221,8 @@ export default function PIIRedactor() {
     setLocalLatencyMs(null);
   };
 
-  const getBadgeStyle = () => {
-    switch (engineState) {
-      case "ready":
-        return {
-          backgroundColor: "#dcfce7",
-          color: "#166534",
-          border: "1px solid #86efac",
-        };
-      case "downloading":
-      case "checking":
-        return {
-          backgroundColor: "#fef9c3",
-          color: "#854d0e",
-          border: "1px solid #fde047",
-        };
-      case "processing_local":
-      case "processing_cloud":
-      case "processing_audio":
-        return {
-          backgroundColor: "#e0e7ff",
-          color: "#3730a3",
-          border: "1px solid #a5b4fc",
-        };
-      case "fallback":
-        return {
-          backgroundColor: "#e0f2fe",
-          color: "#075985",
-          border: "1px solid #7dd3fc",
-        };
-      case "error":
-        return {
-          backgroundColor: "#fee2e2",
-          color: "#991b1b",
-          border: "1px solid #fca5a5",
-        };
-    }
-  };
-
   const isActionable =
-    (session || useFallback) &&
+    (engineMode === "nano" || engineMode === "deterministic") &&
     input.trim().length > 0 &&
     !engineState.startsWith("processing");
 
@@ -324,18 +265,28 @@ export default function PIIRedactor() {
             Zero-Trust PII Shield (Local) + Firebase AI Logic (Cloud)
           </p>
         </div>
-        <span
+        <div
+          className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200"
           style={{
-            padding: "6px 12px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "6px 14px",
             borderRadius: "9999px",
             fontSize: "12px",
-            fontWeight: 600,
+            fontWeight: 500,
+            backgroundColor: "#ecfdf5",
+            color: "#047857",
+            border: "1px solid #a7f3d0",
             transition: "all 0.3s ease",
-            ...getBadgeStyle(),
           }}
         >
-          {statusMessage}
-        </span>
+          {engineMode === "checking" && "Initializing Local Privacy Shield..."}
+          {engineMode === "nano" &&
+            "Hybrid System Ready (Gemini Nano Local + Firebase Cloud)"}
+          {engineMode === "deterministic" &&
+            "Hybrid System Ready (Deterministic Local Shield + Firebase Cloud)"}
+        </div>
       </div>
 
       {/* Input Section */}
@@ -424,6 +375,12 @@ export default function PIIRedactor() {
             ? "Executing Hybrid Pipeline..."
             : "Run Hybrid AI Pipeline"}
         </button>
+
+        {engineState.startsWith("processing") && (
+          <span style={{ fontSize: "13px", color: "#6366f1", fontWeight: 500 }}>
+            {statusMessage}
+          </span>
+        )}
 
         {ttftMs !== null && (
           <span style={{ fontSize: "13px", color: "#0369a1", fontWeight: 500 }}>

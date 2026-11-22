@@ -17,9 +17,10 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Aktifkan App Check Debug Token saat berjalan di localhost
+// Enable App Check Debug Token on localhost using a shared dev token if provided
 if (import.meta.env.DEV) {
-  (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+  (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN =
+    import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
 }
 
 // Inisialisasi App Check dengan reCAPTCHA Enterprise Site Key
