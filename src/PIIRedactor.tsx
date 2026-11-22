@@ -5,6 +5,7 @@ import {
   generateMedicalAudio,
 } from "./services/firebaseHybrid";
 import { redactPIIDeterministically } from "./utils/deterministicRedactor";
+import { useClinicalDictation } from "./hooks/useClinicalDictation";
 
 type LocalEngineMode = "checking" | "nano" | "deterministic";
 
@@ -21,6 +22,21 @@ type EngineStatus =
 export default function PIIRedactor() {
   const [engineMode, setEngineMode] = useState<LocalEngineMode>("checking");
   const [input, setInput] = useState("");
+
+  const {
+    isSupported: isMicSupported,
+    isListening,
+    interimTranscript,
+    error: micError,
+    stopListening,
+    toggleListening,
+  } = useClinicalDictation({
+    onFinalTranscript: (spokenText) => {
+      setInput((prev) =>
+        prev.trim() ? `${prev.trim()} ${spokenText}` : spokenText,
+      );
+    },
+  });
 
   // Pipeline Outputs
   const [redactedText, setRedactedText] = useState("");
@@ -91,6 +107,9 @@ export default function PIIRedactor() {
   }, []);
 
   const handleProcessPipeline = async () => {
+    if (isListening) {
+      stopListening();
+    }
     if (!input.trim()) return;
 
     // Reset Pipeline States
@@ -292,6 +311,7 @@ export default function PIIRedactor() {
       {/* Input Section */}
       <div style={{ marginBottom: "20px" }}>
         <div
+          className="flex items-center justify-between mb-2"
           style={{
             display: "flex",
             justifyContent: "space-between",
@@ -301,26 +321,72 @@ export default function PIIRedactor() {
         >
           <label
             htmlFor="transcript-input"
+            className="text-sm font-semibold text-slate-700"
             style={{ fontSize: "14px", fontWeight: 600, color: "#334155" }}
           >
             Raw Patient Consultation Transcript
           </label>
-          <button
-            type="button"
-            onClick={handleLoadSample}
-            style={{
-              background: "none",
-              border: "none",
-              color: "#2563eb",
-              fontSize: "13px",
-              fontWeight: 600,
-              cursor: "pointer",
-              padding: 0,
-              textDecoration: "underline",
-            }}
+          <div
+            className="flex items-center gap-3"
+            style={{ display: "flex", alignItems: "center", gap: "12px" }}
           >
-            Insert Sample Clinical Note
-          </button>
+            {isMicSupported && (
+              <button
+                type="button"
+                onClick={toggleListening}
+                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  isListening
+                    ? "bg-red-100 text-red-700 border border-red-300"
+                    : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
+                }`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "4px 10px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  backgroundColor: isListening ? "#fee2e2" : "#f1f5f9",
+                  color: isListening ? "#b91c1c" : "#334155",
+                  border: isListening
+                    ? "1px solid #fca5a5"
+                    : "1px solid #e2e8f0",
+                }}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isListening ? "bg-red-600 animate-pulse" : "bg-slate-500"
+                  }`}
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "9999px",
+                    backgroundColor: isListening ? "#dc2626" : "#64748b",
+                  }}
+                />
+                {isListening ? "Stop Dictation" : "Live Mic Dictation"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleLoadSample}
+              className="text-xs font-medium text-blue-600 hover:underline"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2563eb",
+                fontSize: "12px",
+                fontWeight: 500,
+                cursor: "pointer",
+                padding: 0,
+                textDecoration: "underline",
+              }}
+            >
+              Insert Sample Clinical Note
+            </button>
+          </div>
         </div>
         <textarea
           id="transcript-input"
@@ -343,6 +409,31 @@ export default function PIIRedactor() {
             resize: "vertical",
           }}
         />
+        {isListening && interimTranscript && (
+          <p
+            className="mt-1.5 text-xs text-slate-500 italic"
+            style={{
+              marginTop: "6px",
+              fontSize: "12px",
+              color: "#64748b",
+              fontStyle: "italic",
+            }}
+          >
+            Listening: "{interimTranscript}..."
+          </p>
+        )}
+        {micError && (
+          <p
+            className="mt-1.5 text-xs text-red-600"
+            style={{
+              marginTop: "6px",
+              fontSize: "12px",
+              color: "#dc2626",
+            }}
+          >
+            {micError}
+          </p>
+        )}
       </div>
 
       {/* Action Bar */}
