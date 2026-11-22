@@ -21,21 +21,21 @@ const PII_REDACTION_RULES: RedactionRule[] = [
   {
     name: "dob_label",
     pattern:
-      /\b(DOB|Date of Birth|Birthdate)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/gi,
+      /\b(DOB|Date of Birth|Birthdate)\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/gi,
     replacement: "$1: [REDACTED]",
   },
   // Insurance IDs, Policy Numbers, MRNs, and SSNs
   {
     name: "medical_or_insurance_id",
     pattern:
-      /\b(Insurance\s*ID|Policy\s*(?:No|Number|#)|MRN|SSN|Member\s*ID)\s*[:\-]?\s*([A-Z0-9\-]{4,20})/gi,
+      /\b(Insurance\s*ID|Policy\s*(?:No|Number|#)|MRN|SSN|Member\s*ID)\s*[:-]?\s*([A-Z0-9-]{4,20})/gi,
     replacement: "$1: [REDACTED]",
   },
   // Phone numbers (US & international formats)
   {
     name: "phone_number",
     pattern:
-      /(?:\bPhone\s*[:\-]?\s*)?(?:\+?\d{1,3}[\s\-]?)?(?:\(\d{3}\)|\d{3})[\s\-]\d{3}[\s\-]\d{4}\b/gi,
+      /(?:\bPhone\s*[:-]?\s*)?(?:\+?\d{1,3}[\s-]?)?(?:\(\d{3}\)|\d{3})[\s-]\d{3}[\s-]\d{4}\b/gi,
     replacement: ((match: string) =>
       match.toLowerCase().startsWith("phone") ? "Phone: [REDACTED]" : "[REDACTED]") as unknown as string,
   },

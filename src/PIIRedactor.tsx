@@ -510,10 +510,10 @@ export default function PIIRedactor() {
             }}
           >
             {soapNote ? (
-              // react-markdown merender teks mentah menjadi HTML asli (bold, list, dll)
+              // ReactMarkdown parses raw markdown text into semantic HTML elements
               <ReactMarkdown
                 components={{
-                  h2: ({ node, ...props }) => (
+                  h2: ({ node: _node, ...props }) => (
                     <h2
                       style={{
                         fontSize: "16px",
@@ -523,16 +523,16 @@ export default function PIIRedactor() {
                       {...props}
                     />
                   ),
-                  p: ({ node, ...props }) => (
+                  p: ({ node: _node, ...props }) => (
                     <p style={{ margin: "0 0 12px 0" }} {...props} />
                   ),
-                  ul: ({ node, ...props }) => (
+                  ul: ({ node: _node, ...props }) => (
                     <ul
                       style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}
                       {...props}
                     />
                   ),
-                  ol: ({ node, ...props }) => (
+                  ol: ({ node: _node, ...props }) => (
                     <ol
                       style={{ margin: "0 0 12px 0", paddingLeft: "20px" }}
                       {...props}

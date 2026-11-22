@@ -5,36 +5,49 @@ import {
 } from "firebase/app-check";
 import { getAI, getGenerativeModel, GoogleAIBackend } from "firebase/ai";
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBCI4D1dcL4ecRrAbPOSSoTjat32bWk0-E",
-  authDomain: "fbailogic26vrt-3027.firebaseapp.com",
-  projectId: "fbailogic26vrt-3027",
-  storageBucket: "fbailogic26vrt-3027.firebasestorage.app",
-  messagingSenderId: "643208414044",
-  appId: "1:643208414044:web:199a7b8ada7a75c5093799",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
+
+const requiredEnvVars = [
+  "VITE_FIREBASE_API_KEY",
+  "VITE_FIREBASE_PROJECT_ID",
+  "VITE_RECAPTCHA_ENTERPRISE_SITE_KEY",
+] as const;
+
+for (const key of requiredEnvVars) {
+  if (!import.meta.env[key]) {
+    console.error(
+      `[EchoGuard Config Error] Missing environment variable: ${key}`,
+    );
+  }
+}
 
 const app = initializeApp(firebaseConfig);
 
-// Enable App Check Debug Token on localhost using a shared dev token if provided
 if (import.meta.env.DEV) {
   (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN =
     import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
 }
 
-// Inisialisasi App Check dengan reCAPTCHA Enterprise Site Key
 initializeAppCheck(app, {
   provider: new ReCaptchaEnterpriseProvider(
-    "6LdQICsuAAAAAPn5_AFrn5EWq2ZuUYksFAeuvRpq",
+    import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY,
   ),
   isTokenAutoRefreshEnabled: true,
 });
 
-// Inisialisasi Firebase AI Logic dengan Gemini Developer API
+// Initialize Firebase AI Logic module with Google Gemini Developer API
 const ai = getAI(app, { backend: new GoogleAIBackend() });
 
-export const IS_MOCK_MODE = false;
+export const IS_MOCK_MODE = import.meta.env.VITE_ENABLE_MOCK_MODE === "true";
+const TEXT_MODEL = import.meta.env.VITE_GEMINI_TEXT_MODEL || "gemini-3.8-flash";
+const TTS_MODEL = import.meta.env.VITE_GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
 
 /**
  * Generates a structured medical SOAP note from a PII-redacted transcript.
@@ -53,7 +66,7 @@ export async function generateSOAPNote(
   }
 
   try {
-    const model = getGenerativeModel(ai, { model: "gemini-3.8-flash" });
+    const model = getGenerativeModel(ai, { model: TEXT_MODEL });
     const prompt = `You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.
 
 Transcript:
@@ -81,8 +94,8 @@ export async function generateMedicalAudio(
   }
 
   try {
-    // 1. Susun skrip dialog singkat dari SOAP Note
-    const scriptModel = getGenerativeModel(ai, { model: "gemini-3.8-flash" });
+    // 1. Synthesize concise clinical handoff dialogue from SOAP Note
+    const scriptModel = getGenerativeModel(ai, { model: TEXT_MODEL });
     const scriptPrompt = `Convert the Assessment and Plan from this SOAP note into a concise 2-line clinical handoff dialogue between Doctor and Nurse. Format strictly as:
 Doctor: [sentence]
 Nurse: [sentence]
@@ -93,9 +106,9 @@ ${soapNote}`;
     const scriptResult = await scriptModel.generateContent(scriptPrompt);
     const dialogueScript = scriptResult.response.text();
 
-    // 2. Render audio menggunakan model TTS Gemini
+    // 2. Render multi-speaker dialogue audio using Gemini TTS
     const ttsModel = getGenerativeModel(ai, {
-      model: "gemini-2.5-flash-preview-tts",
+      model: TTS_MODEL,
       generationConfig: {
         responseModalities: ["AUDIO"],
         speechConfig: {
@@ -141,8 +154,12 @@ ${soapNote}`;
 }
 
 /**
- * Membungkus data audio mentah PCM (base64) dengan header WAV 44-byte
- * agar dapat langsung diputar secara native oleh elemen HTML5 <audio> di browser.
+ * Encapsulates raw linear PCM base64 audio data with a 44-byte RIFF/WAVE header
+ * to produce a playable Blob URL compatible with HTML5 <audio> elements.
+ *
+ * @param base64Pcm - Raw base64-encoded PCM audio data.
+ * @param sampleRate - Sampling rate in Hz (default: 24000).
+ * @returns A Blob object URL for native browser audio playback.
  */
 export function pcmBase64ToWavUrl(base64Pcm: string, sampleRate = 24000): string {
   const binaryString = atob(base64Pcm);
