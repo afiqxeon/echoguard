@@ -6,6 +6,7 @@ import {
 } from "./services/firebaseHybrid";
 import { redactPIIDeterministically } from "./utils/deterministicRedactor";
 import { useClinicalDictation } from "./hooks/useClinicalDictation";
+import { downloadFhirJson, downloadAudioWav } from "./utils/clinicalExport";
 
 type LocalEngineMode = "checking" | "nano" | "deterministic";
 
@@ -43,6 +44,18 @@ export default function PIIRedactor() {
   const [soapNote, setSoapNote] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [audioScript, setAudioScript] = useState<string>("");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopySoap = async () => {
+    if (!soapNote) return;
+    try {
+      await navigator.clipboard.writeText(soapNote);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy SOAP note:", err);
+    }
+  };
 
   // Engine States & Metrics
   const [engineState, setEngineState] = useState<EngineStatus>("checking");
@@ -641,6 +654,63 @@ export default function PIIRedactor() {
               </p>
             )}
           </div>
+
+          {soapNote && (
+            <div
+              className="mt-4 pt-3 border-t border-sky-200/70 flex flex-wrap items-center gap-2"
+              style={{
+                marginTop: "16px",
+                paddingTop: "12px",
+                borderTop: "1px solid rgba(186, 230, 253, 0.7)",
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleCopySoap}
+                className="px-3 py-1.5 rounded-md text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors"
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  backgroundColor: "#ffffff",
+                  color: "#334155",
+                  border: "1px solid #cbd5e1",
+                  cursor: "pointer",
+                }}
+              >
+                {copied ? "Copied to Clipboard" : "Copy SOAP Note"}
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  downloadFhirJson({
+                    soapNote,
+                    redactedTranscript: redactedText,
+                    handoffScript: audioScript,
+                    localEngine: engineMode,
+                  })
+                }
+                className="px-3 py-1.5 rounded-md text-xs font-medium bg-sky-600 text-white hover:bg-sky-700 transition-colors"
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  backgroundColor: "#0284c7",
+                  color: "#ffffff",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                Export HL7 FHIR JSON
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -673,16 +743,41 @@ export default function PIIRedactor() {
             >
               3. Multi-Speaker Action Plan (Doctor & Nurse)
             </h3>
-            <span
+            <div
               style={{
-                fontSize: "11px",
-                fontWeight: 700,
-                color: "#be185d",
-                letterSpacing: "0.05em",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
               }}
             >
-              🔊 FIREBASE TTS
-            </span>
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  color: "#be185d",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                🔊 FIREBASE TTS
+              </span>
+              <button
+                type="button"
+                onClick={() => downloadAudioWav(audioUrl)}
+                className="px-3 py-1 rounded-md text-xs font-medium bg-white text-rose-700 border border-rose-200 hover:bg-rose-50 transition-colors"
+                style={{
+                  padding: "4px 12px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  backgroundColor: "#ffffff",
+                  color: "#be185d",
+                  border: "1px solid #fecdd3",
+                  cursor: "pointer",
+                }}
+              >
+                Download WAV
+              </button>
+            </div>
           </div>
           <audio
             controls
