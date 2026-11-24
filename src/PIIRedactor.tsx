@@ -113,7 +113,7 @@ export default function PIIRedactor() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [engineMode, setEngineMode] = useState<LocalEngineMode>("checking");
   const [input, setInput] = useState("");
-  const [sampleIndex, setSampleIndex] = useState(0);
+  const [sampleIndex, setSampleIndex] = useState<number | null>(null);
   const transcriptInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const {
@@ -460,9 +460,11 @@ export default function PIIRedactor() {
     }
   };
 
-  const handleInsertSample = () => {
-    const currentSample = SAMPLE_CLINICAL_NOTES[sampleIndex];
-    setInput(currentSample.text);
+  const handleSelectSample = (sampleText: string, index: number) => {
+    if (audioUrl && audioUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(audioUrl);
+    }
+    setInput(sampleText);
     setPipelineStage("idle");
     setRedactedText("");
     setPrivacyAudit(null);
@@ -473,7 +475,7 @@ export default function PIIRedactor() {
     setActiveSessionId(null);
     setTtftMs(null);
     setLocalLatencyMs(null);
-    setSampleIndex((prev) => (prev + 1) % SAMPLE_CLINICAL_NOTES.length);
+    setSampleIndex(index);
   };
 
   const handleNewSession = () => {
@@ -481,6 +483,7 @@ export default function PIIRedactor() {
       URL.revokeObjectURL(audioUrl);
     }
     setInput("");
+    setSampleIndex(null);
     setRedactedText("");
     setSoapNote("");
     setAudioScript("");
@@ -507,88 +510,124 @@ export default function PIIRedactor() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* 1. TOP NAVBAR (Full-Width) */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-6 py-3 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-            EG
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-4 sm:px-6 py-3">
+        <div className="max-w-[1600px] mx-auto flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5 lg:gap-4">
+          {/* Row 1: Logo + Hybrid Ready Badge (Aligned with Workspace left boundary on Desktop, Top-Right on Mobile/Tablet) */}
+          <div className="flex items-center justify-between lg:justify-start gap-3">
+            <div className="flex items-center gap-3 lg:w-72 xl:w-80 shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                EG
+              </div>
+              <div>
+                <h1 className="text-base font-bold tracking-tight text-slate-900 leading-tight">
+                  EchoGuard
+                </h1>
+                <p className="text-[11px] text-slate-500">
+                  Zero-Trust Hybrid Telehealth Scribe
+                </p>
+              </div>
+            </div>
+
+            {/* Status Badge — Unified single element across all screen sizes */}
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] lg:text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+              <span className="w-1.5 h-1.5 lg:w-2 lg:h-2 rounded-full bg-emerald-500" />
+              <span className="hidden sm:inline">
+                {engineMode === "nano"
+                  ? "Hybrid Ready (Nano + Cloud)"
+                  : "Hybrid Ready (Local + Cloud)"}
+              </span>
+              <span className="sm:hidden">Hybrid Ready</span>
+            </span>
           </div>
-          <div>
-            <h1 className="text-base font-bold tracking-tight text-slate-900 leading-tight">
-              EchoGuard
-            </h1>
-            <p className="text-[11px] text-slate-500">
-              Zero-Trust Hybrid Telehealth Scribe
-            </p>
+
+          {/* Row 2 (Mobile/Tablet) / Right Side (Desktop): Action Toolbar */}
+          <div className="flex items-center justify-between lg:justify-end gap-2 pt-2.5 border-t border-slate-100 lg:pt-0 lg:border-t-0">
+            {/* History Toggle Button — Left Side (Mobile/Tablet only) */}
+            <button
+              type="button"
+              onClick={() => setIsHistoryOpen((prev) => !prev)}
+              aria-expanded={isHistoryOpen}
+              className={`lg:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                isHistoryOpen
+                  ? "bg-sky-50 text-sky-700 border-sky-300 shadow-xs"
+                  : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              <span>History ({sessions.length})</span>
+            </button>
+
+            {/* Action Buttons Group on the Right */}
+            <div className="flex items-center gap-2 ml-auto lg:ml-0">
+              <button
+                type="button"
+                onClick={handleNewSession}
+                disabled={isProcessing}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 transition-colors"
+              >
+                <span>+</span>
+                <span>New Session</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors"
+              >
+                <span>Settings</span>
+              </button>
+            </div>
           </div>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setIsHistoryOpen((prev) => !prev)}
-            className="lg:hidden inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 cursor-pointer shadow-xs"
-          >
-            <span>History ({sessions.length})</span>
-          </button>
-
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            {engineMode === "checking"
-              ? "Initializing Local Shield..."
-              : engineMode === "nano"
-                ? "Hybrid Ready (Nano + Cloud)"
-                : "Hybrid Ready (Local Shield + Cloud)"}
-          </span>
-
-          <button
-            type="button"
-            onClick={handleNewSession}
-            disabled={isProcessing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 transition-colors cursor-pointer"
-          >
-            <span>+</span>
-            <span>New Session</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsSettingsOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors shadow-xs cursor-pointer"
-          >
-            <span>⚙️</span> Settings
-          </button>
         </div>
       </header>
 
       {/* 2. BODY: LEFT SIDEBAR + MAIN WORKSPACE */}
       <div className="flex-1 flex flex-col lg:flex-row max-w-[1600px] w-full mx-auto">
-        {/* LEFT SIDEBAR: LOCAL SESSION HISTORY */}
+        {/* Backdrop when drawer is open on mobile/tablet */}
+        {isHistoryOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-[1px] lg:hidden"
+            onClick={() => setIsHistoryOpen(false)}
+            aria-hidden="true"
+          />
+        )}
+
+        {/* LEFT SIDEBAR (Desktop) / SLIDE-OVER DRAWER (Mobile & Tablet) */}
         <aside
-          className={`${
-            isHistoryOpen ? "flex" : "hidden"
-          } lg:flex w-full lg:w-72 xl:w-80 shrink-0 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 flex-col`}
+          className={`fixed inset-y-0 left-0 z-50 w-80 bg-white border-r border-slate-200 shadow-2xl flex flex-col transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-72 xl:w-80 lg:shadow-none lg:translate-x-0 shrink-0 ${
+            isHistoryOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
         >
           <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div>
               <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
                 Encounters ({sessions.length})
               </h2>
-              <p className="text-[11px] text-slate-400">
-                Local-only • Zero-PII
-              </p>
+              <p className="text-[11px] text-slate-400">Local-only • Zero-PII</p>
             </div>
-            {sessions.length > 0 && (
+
+            <div className="flex items-center gap-3">
+              {sessions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearHistory}
+                  className="text-[11px] font-medium text-red-600 hover:underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+              {/* Close Button for Mobile/Tablet */}
               <button
                 type="button"
-                onClick={handleClearHistory}
-                className="text-[11px] font-medium text-red-600 hover:underline cursor-pointer"
+                onClick={() => setIsHistoryOpen(false)}
+                className="lg:hidden p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+                aria-label="Close history"
               >
-                Clear
+                ✕
               </button>
-            )}
+            </div>
           </div>
 
-          <div className="p-3 space-y-2 overflow-y-auto max-h-64 lg:max-h-[calc(100vh-120px)] flex-1">
+          <div className="p-3 space-y-2 overflow-y-auto flex-1 lg:max-h-[calc(100vh-120px)]">
             {sessions.length === 0 ? (
               <p className="text-xs text-slate-400 italic p-2">
                 No saved sessions yet. Run the pipeline to save a de-identified encounter locally.
@@ -666,52 +705,31 @@ export default function PIIRedactor() {
               </div>
             )}
 
-            <div className="flex items-center justify-between mb-2">
+            {/* Header Kartu Input — Bersih */}
+            <div className="flex items-center justify-between gap-2 mb-2.5">
               <label
-                htmlFor="transcript-input"
-                className="text-sm font-semibold text-slate-700"
+                htmlFor="raw-transcript"
+                className="text-sm font-semibold text-slate-900"
               >
                 Raw Patient Consultation Transcript
               </label>
-              <div className="flex items-center gap-3">
-                {isMicSupported && (
-                  <button
-                    type="button"
-                    onClick={toggleListening}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                      isListening
-                        ? "bg-red-100 text-red-700 border border-red-300"
-                        : "bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200"
-                    }`}
-                  >
-                    <span
-                      className={`w-2 h-2 rounded-full ${
-                        isListening ? "bg-red-600 animate-pulse" : "bg-slate-500"
-                      }`}
-                    />
-                    {isListening ? "Stop Dictation" : "Live Mic Dictation"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleInsertSample}
-                  className="text-xs font-medium text-sky-600 hover:text-sky-800 hover:underline cursor-pointer"
-                  title={`Next: ${SAMPLE_CLINICAL_NOTES[sampleIndex].label}`}
-                >
-                  Insert Sample ({SAMPLE_CLINICAL_NOTES[sampleIndex].label})
-                </button>
-              </div>
+              <span className="text-[11px] font-medium text-slate-400">
+                Dictate, type, or pick a sample below
+              </span>
             </div>
 
+            {/* Textarea */}
             <textarea
+              id="raw-transcript"
               ref={transcriptInputRef}
-              id="transcript-input"
               value={input}
-              onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
-                setInput(e.target.value)
-              }
-              placeholder="Enter raw clinical notes containing names, phone numbers, or insurance IDs..."
-              className="w-full h-24 p-3 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
+                setInput(e.target.value);
+                setSampleIndex(null);
+              }}
+              rows={4}
+              placeholder="Speak via Live Mic, type clinical notes with patient PII (name, DOB, phone, insurance ID), or select a quick sample..."
+              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 resize-y"
             />
 
             {isListening && interimTranscript && (
@@ -725,115 +743,194 @@ export default function PIIRedactor() {
               </p>
             )}
 
-            {/* Action Bar (Run Button + Metrics + 3-Step Tracker) */}
-            <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4">
+            {/* Quick Demo Cases — Menggantikan link Insert Sample yang tersembunyi */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-medium text-slate-400 mr-1">
+                Try sample:
+              </span>
+              {SAMPLE_CLINICAL_NOTES.map((sample, idx) => {
+                const isSelected = sampleIndex === idx && input === sample.text;
+                return (
+                  <button
+                    key={sample.label}
+                    type="button"
+                    onClick={() => {
+                      handleSelectSample(sample.text, idx);
+                    }}
+                    disabled={isProcessing}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors disabled:opacity-50 cursor-pointer ${
+                      isSelected
+                        ? "bg-sky-100 text-sky-800 border-sky-300"
+                        : "bg-slate-100 text-slate-600 hover:bg-sky-50 hover:text-sky-700 border-transparent hover:border-sky-200"
+                    }`}
+                  >
+                    {sample.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Action Bar Bawah: Mic di Kiri, Run Pipeline di Kanan */}
+            <div className="mt-4 pt-3.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleListening}
+                  disabled={isProcessing || !isMicSupported}
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50 cursor-pointer ${
+                    isListening
+                      ? "bg-red-50 text-red-700 border-red-300 animate-pulse"
+                      : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      isListening ? "text-red-600" : "text-slate-500"
+                    }`}
+                    aria-hidden="true"
+                  >
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" x2="12" y1="19" y2="22" />
+                  </svg>
+                  <span>
+                    {isListening ? "Stop Dictation" : "Live Mic Dictation"}
+                  </span>
+                </button>
+
+                {input.trim().length > 0 && !isProcessing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInput("");
+                      setSampleIndex(null);
+                    }}
+                    className="px-2.5 py-2 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={handleProcessPipeline}
                 disabled={!isActionable}
-                className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-xs ${
-                  isActionable
-                    ? "bg-slate-900 text-white hover:bg-slate-800 cursor-pointer"
-                    : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                }`}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors cursor-pointer"
               >
-                {isProcessing
-                  ? "Executing Hybrid Pipeline..."
-                  : "Run Hybrid AI Pipeline"}
+                <span>
+                  {isProcessing
+                    ? "Running Pipeline..."
+                    : "Run Hybrid AI Pipeline"}
+                </span>
+                {!isProcessing && <span aria-hidden="true">→</span>}
               </button>
-
-              {isProcessing && (
-                <span className="text-xs font-medium text-indigo-600">
-                  {statusMessage}
-                </span>
-              )}
-
-              {ttftMs !== null && (
-                <span className="text-xs font-medium text-sky-700">
-                  Local First Token (TTFT): <strong>{ttftMs} ms</strong>
-                </span>
-              )}
-              {localLatencyMs !== null && (
-                <span className="text-xs font-medium text-slate-600">
-                  Local Total: <strong>{localLatencyMs} ms</strong>
-                </span>
-              )}
-
-              {pipelineStage !== "idle" && (
-                <div className="w-full mt-2 flex flex-wrap items-center gap-2 text-xs">
-                  {/* Step 1: Local PII Shield */}
-                  <div
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
-                      pipelineStage === "local"
-                        ? "bg-sky-50 text-sky-700 border-sky-300 font-medium"
-                        : pipelineStage === "cloud" ||
-                            pipelineStage === "audio" ||
-                            pipelineStage === "done"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                          : "bg-slate-50 text-slate-500 border-slate-200"
-                    }`}
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    {pipelineStage === "cloud" ||
-                    pipelineStage === "audio" ||
-                    pipelineStage === "done" ? (
-                      <span className="text-emerald-700 font-bold">✓</span>
-                    ) : pipelineStage === "local" ? (
-                      <SpinnerIcon size={14} color="#0284c7" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-slate-300" />
-                    )}
-                    <span>1. Local PII Shield</span>
-                  </div>
-
-                  <span className="text-slate-300">→</span>
-
-                  {/* Step 2: Cloud SOAP Note */}
-                  <div
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
-                      pipelineStage === "cloud"
-                        ? "bg-sky-50 text-sky-700 border-sky-300 font-medium"
-                        : pipelineStage === "audio" || pipelineStage === "done"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                          : "bg-slate-50 text-slate-500 border-slate-200"
-                    }`}
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    {pipelineStage === "audio" || pipelineStage === "done" ? (
-                      <span className="text-emerald-700 font-bold">✓</span>
-                    ) : pipelineStage === "cloud" ? (
-                      <SpinnerIcon size={14} color="#0284c7" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-slate-300" />
-                    )}
-                    <span>2. Cloud SOAP Note</span>
-                  </div>
-
-                  <span className="text-slate-300">→</span>
-
-                  {/* Step 3: Multi-Speaker Audio */}
-                  <div
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
-                      pipelineStage === "audio"
-                        ? "bg-sky-50 text-sky-700 border-sky-300 font-medium"
-                        : pipelineStage === "done"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                          : "bg-slate-50 text-slate-500 border-slate-200"
-                    }`}
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    {pipelineStage === "done" ? (
-                      <span className="text-emerald-700 font-bold">✓</span>
-                    ) : pipelineStage === "audio" ? (
-                      <SpinnerIcon size={14} color="#0284c7" />
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-slate-300" />
-                    )}
-                    <span>3. Multi-Speaker Audio</span>
-                  </div>
-                </div>
-              )}
             </div>
+
+            {/* Status, Latency & Pipeline Stepper */}
+            {(isProcessing || ttftMs !== null || pipelineStage !== "idle") && (
+              <div className="mt-3.5 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  {isProcessing && (
+                    <span className="font-medium text-indigo-600">
+                      {statusMessage}
+                    </span>
+                  )}
+                  {ttftMs !== null && (
+                    <span className="font-medium text-sky-700">
+                      Local First Token (TTFT): <strong>{ttftMs} ms</strong>
+                    </span>
+                  )}
+                  {localLatencyMs !== null && (
+                    <span className="font-medium text-slate-600">
+                      Local Total: <strong>{localLatencyMs} ms</strong>
+                    </span>
+                  )}
+                </div>
+
+                {pipelineStage !== "idle" && (
+                  <div className="w-full mt-1 flex flex-wrap items-center gap-2">
+                    {/* Step 1: Local PII Shield */}
+                    <div
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
+                        pipelineStage === "local"
+                          ? "bg-sky-50 text-sky-700 border-sky-300 font-medium"
+                          : pipelineStage === "cloud" ||
+                              pipelineStage === "audio" ||
+                              pipelineStage === "done"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                            : "bg-slate-50 text-slate-500 border-slate-200"
+                      }`}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      {pipelineStage === "cloud" ||
+                      pipelineStage === "audio" ||
+                      pipelineStage === "done" ? (
+                        <span className="text-emerald-700 font-bold">✓</span>
+                      ) : pipelineStage === "local" ? (
+                        <SpinnerIcon size={14} color="#0284c7" />
+                      ) : (
+                        <span className="w-2 h-2 rounded-full bg-slate-300" />
+                      )}
+                      <span>1. Local PII Shield</span>
+                    </div>
+
+                    <span className="text-slate-300">→</span>
+
+                    {/* Step 2: Cloud SOAP Note */}
+                    <div
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
+                        pipelineStage === "cloud"
+                          ? "bg-sky-50 text-sky-700 border-sky-300 font-medium"
+                          : pipelineStage === "audio" || pipelineStage === "done"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                            : "bg-slate-50 text-slate-500 border-slate-200"
+                      }`}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      {pipelineStage === "audio" || pipelineStage === "done" ? (
+                        <span className="text-emerald-700 font-bold">✓</span>
+                      ) : pipelineStage === "cloud" ? (
+                        <SpinnerIcon size={14} color="#0284c7" />
+                      ) : (
+                        <span className="w-2 h-2 rounded-full bg-slate-300" />
+                      )}
+                      <span>2. Cloud SOAP Note</span>
+                    </div>
+
+                    <span className="text-slate-300">→</span>
+
+                    {/* Step 3: Multi-Speaker Audio */}
+                    <div
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors ${
+                        pipelineStage === "audio"
+                          ? "bg-sky-50 text-sky-700 border-sky-300 font-medium"
+                          : pipelineStage === "done"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                            : "bg-slate-50 text-slate-500 border-slate-200"
+                      }`}
+                      style={{ whiteSpace: "nowrap" }}
+                    >
+                      {pipelineStage === "done" ? (
+                        <span className="text-emerald-700 font-bold">✓</span>
+                      ) : pipelineStage === "audio" ? (
+                        <SpinnerIcon size={14} color="#0284c7" />
+                      ) : (
+                        <span className="w-2 h-2 rounded-full bg-slate-300" />
+                      )}
+                      <span>3. Multi-Speaker Audio</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {/* B. BALANCED OUTPUT GRID (1 -> 2 -> 3 on mobile/tablet; 5:7 on desktop) */}
@@ -943,7 +1040,7 @@ export default function PIIRedactor() {
               )}
             </section>
 
-            {/* Card 3: Multi-Speaker Action Plan — selalu tampil di kiri bawah */}
+            {/* Card 3: Multi-Speaker Action Plan — always displayed bottom-left */}
             <section className="xl:col-span-5 bg-rose-50/40 rounded-xl border border-rose-200/80 shadow-xs p-5">
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <h3 className="text-sm font-semibold text-rose-900">
@@ -1035,11 +1132,47 @@ export default function PIIRedactor() {
                   )}
 
                   {audioScript && (
-                    <div className="mt-3 p-3 bg-white/80 rounded-lg border border-pink-200 text-xs text-slate-700 whitespace-pre-line leading-relaxed">
-                      <p className="text-[11px] font-semibold text-pink-700 mb-1 uppercase tracking-wider">
+                    <div className="mt-3 p-3 bg-white/80 rounded-lg border border-pink-200">
+                      <p className="text-[11px] font-semibold text-pink-700 mb-2 uppercase tracking-wider">
                         Spoken Handoff Script
                       </p>
-                      {audioScript}
+                      <div className="space-y-2.5 text-sm text-slate-700 leading-relaxed">
+                        {audioScript
+                          .split(/\n+/)
+                          .map((line) => line.trim())
+                          .filter(Boolean)
+                          .map((line, index) => {
+                            const match = line.match(
+                              /^(Doctor|Nurse|Dokter|Perawat):\s*(.*)$/i,
+                            );
+
+                            if (match) {
+                              const [, speaker, dialogue] = match;
+                              const isDoctor = /^(Doctor|Dokter)$/i.test(speaker);
+
+                              return (
+                                <p key={index} className="leading-relaxed">
+                                  <strong
+                                    className={`font-semibold mr-1.5 ${
+                                      isDoctor
+                                        ? "text-slate-900"
+                                        : "text-rose-800"
+                                    }`}
+                                  >
+                                    {speaker}:
+                                  </strong>
+                                  <span>{dialogue}</span>
+                                </p>
+                              );
+                            }
+
+                            return (
+                              <p key={index} className="leading-relaxed">
+                                {line}
+                              </p>
+                            );
+                          })}
+                      </div>
                     </div>
                   )}
                 </>
@@ -1048,6 +1181,21 @@ export default function PIIRedactor() {
           </div>
         </main>
       </div>
+
+      {/* 3. FOOTER */}
+      <footer className="bg-white border-t border-slate-200 px-4 sm:px-6 py-3.5">
+        <div className="max-w-[1600px] mx-auto flex flex-col lg:flex-row items-center justify-between gap-1.5 lg:gap-4 text-[11px] text-slate-500">
+          <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 shrink-0">
+            <span className="font-semibold text-slate-700">EchoGuard</span>
+            <span aria-hidden="true">•</span>
+            <span>Zero-Trust Hybrid Telehealth Scribe</span>
+          </div>
+
+          <p className="text-center lg:text-right text-slate-400 leading-relaxed">
+            Clinical decision support prototype — always verify AI-generated SOAP notes before EHR entry.
+          </p>
+        </div>
+      </footer>
 
       {/* Settings Modal */}
       <SettingsModal

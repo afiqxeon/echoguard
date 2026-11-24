@@ -35,7 +35,7 @@ export function saveSession(
 
   // Extract a clean, de-identified title snippet from the redacted transcript
   const cleanSnippet = session.redactedTranscript
-    .replace(/\([^)]*\[REDACTED\][^)]*\)/g, "") // Hapus blok kurung berisi PII seperti (DOB: [REDACTED], ...)
+    .replace(/\([^)]*\[REDACTED\][^)]*\)/g, "") // Strip parenthesized PII blocks like (DOB: [REDACTED], ...)
     .replace(/\[REDACTED\]/g, "")
     .replace(/\s+/g, " ")
     .trim();

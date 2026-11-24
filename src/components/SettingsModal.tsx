@@ -3,7 +3,6 @@ import {
   type EchoGuardSettings,
   DOCTOR_VOICE_OPTIONS,
   NURSE_VOICE_OPTIONS,
-  DICTATION_LANGUAGES,
   DEFAULT_SETTINGS,
 } from "../utils/settingsStorage";
 import { generateSingleVoicePreview } from "../services/firebaseHybrid";
@@ -126,19 +125,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         padding: "16px",
       }}
     >
-      <div
-        className="w-full max-w-lg rounded-xl bg-white shadow-xl border border-slate-200 overflow-hidden"
-        style={{
-          width: "100%",
-          maxWidth: "32rem",
-          borderRadius: "12px",
-          backgroundColor: "#ffffff",
-          boxShadow:
-            "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
-          border: "1px solid #e2e8f0",
-          overflow: "hidden",
-        }}
-      >
+      <div className="w-full max-w-lg mx-4 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
         {/* Header */}
         <div
           className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50"
@@ -218,38 +205,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               style={{ display: "flex", flexDirection: "column", gap: "12px" }}
             >
               {/* Doctor Voice Row */}
-              <div>
-                <label
-                  className="block text-xs font-medium text-slate-700 mb-1"
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    color: "#334155",
-                    marginBottom: "4px",
-                  }}
-                >
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-slate-700">
                   Doctor Voice Profile
                 </label>
-                <div
-                  className="flex items-center gap-2"
-                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                >
+                <div className="flex items-center gap-2 w-full">
                   <select
                     value={draft.doctorVoice}
                     onChange={(e) =>
                       setDraft({ ...draft, doctorVoice: e.target.value })
                     }
-                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                    style={{
-                      flex: 1,
-                      borderRadius: "8px",
-                      border: "1px solid #cbd5e1",
-                      backgroundColor: "#ffffff",
-                      padding: "8px 12px",
-                      fontSize: "14px",
-                      color: "#1e293b",
-                    }}
+                    className="flex-1 min-w-0 truncate rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20"
                   >
                     {DOCTOR_VOICE_OPTIONS.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -261,18 +227,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     type="button"
                     onClick={() => handlePreviewVoice("Doctor", draft.doctorVoice)}
                     disabled={previewingRole !== null}
-                    title="Preview Doctor voice"
-                    className="px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 disabled:opacity-50 transition-colors"
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: "8px",
-                      border: "1px solid #cbd5e1",
-                      backgroundColor: "#f8fafc",
-                      color: "#334155",
-                      cursor: previewingRole !== null ? "not-allowed" : "pointer",
-                      opacity: previewingRole !== null ? 0.5 : 1,
-                      fontSize: "14px",
-                    }}
+                    title="Preview Doctor Voice"
+                    className="shrink-0 h-[38px] w-[38px] inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 transition-colors cursor-pointer"
                   >
                     {previewingRole === "Doctor" ? "..." : "🔊"}
                   </button>
@@ -280,38 +236,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Nurse Voice Row */}
-              <div>
-                <label
-                  className="block text-xs font-medium text-slate-700 mb-1"
-                  style={{
-                    display: "block",
-                    fontSize: "12px",
-                    fontWeight: 500,
-                    color: "#334155",
-                    marginBottom: "4px",
-                  }}
-                >
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-slate-700">
                   Nurse Voice Profile
                 </label>
-                <div
-                  className="flex items-center gap-2"
-                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                >
+                <div className="flex items-center gap-2 w-full">
                   <select
                     value={draft.nurseVoice}
                     onChange={(e) =>
                       setDraft({ ...draft, nurseVoice: e.target.value })
                     }
-                    className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                    style={{
-                      flex: 1,
-                      borderRadius: "8px",
-                      border: "1px solid #cbd5e1",
-                      backgroundColor: "#ffffff",
-                      padding: "8px 12px",
-                      fontSize: "14px",
-                      color: "#1e293b",
-                    }}
+                    className="flex-1 min-w-0 truncate rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20"
                   >
                     {NURSE_VOICE_OPTIONS.map((v) => (
                       <option key={v.id} value={v.id}>
@@ -323,18 +258,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     type="button"
                     onClick={() => handlePreviewVoice("Nurse", draft.nurseVoice)}
                     disabled={previewingRole !== null}
-                    title="Preview Nurse voice"
-                    className="px-3 py-2 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 disabled:opacity-50 transition-colors"
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: "8px",
-                      border: "1px solid #cbd5e1",
-                      backgroundColor: "#f8fafc",
-                      color: "#334155",
-                      cursor: previewingRole !== null ? "not-allowed" : "pointer",
-                      opacity: previewingRole !== null ? 0.5 : 1,
-                      fontSize: "14px",
-                    }}
+                    title="Preview Nurse Voice"
+                    className="shrink-0 h-[38px] w-[38px] inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white hover:bg-slate-50 active:bg-slate-100 disabled:opacity-50 transition-colors cursor-pointer"
                   >
                     {previewingRole === "Nurse" ? "..." : "🔊"}
                   </button>
@@ -343,74 +268,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             {testError && (
-              <p
-                className="text-xs text-red-600"
-                style={{ margin: 0, fontSize: "12px", color: "#dc2626" }}
-              >
+              <p className="text-xs text-red-600">
                 {testError}
               </p>
             )}
           </section>
 
           {/* Section 2: Dictation */}
-          <section
-            className="space-y-3 pt-4 border-t border-slate-100"
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "12px",
-              paddingTop: "16px",
-              borderTop: "1px solid #f1f5f9",
-            }}
-          >
-            <h3
-              className="text-xs font-semibold uppercase tracking-wider text-slate-500"
-              style={{
-                margin: 0,
-                fontSize: "11px",
-                fontWeight: 600,
-                letterSpacing: "0.05em",
-                textTransform: "uppercase",
-                color: "#64748b",
-              }}
-            >
+          <section className="space-y-3 pt-4 border-t border-slate-100">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
               Live Clinical Dictation
             </h3>
-            <div>
-              <label
-                className="block text-xs font-medium text-slate-700 mb-1"
-                style={{
-                  display: "block",
-                  fontSize: "12px",
-                  fontWeight: 500,
-                  color: "#334155",
-                  marginBottom: "4px",
-                }}
-              >
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-slate-700">
                 Speech Recognition Language
               </label>
-              <select
-                value={draft.dictationLanguage}
-                onChange={(e) =>
-                  setDraft({ ...draft, dictationLanguage: e.target.value })
-                }
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                style={{
-                  width: "100%",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1",
-                  backgroundColor: "#ffffff",
-                  padding: "8px 12px",
-                  fontSize: "14px",
-                  color: "#1e293b",
-                }}
-              >
-                {DICTATION_LANGUAGES.map((lang) => (
-                  <option key={lang.code} value={lang.code}>
-                    {lang.label}
-                  </option>
-                ))}
-              </select>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: "en-US", label: "English (US)" },
+                  { value: "en-GB", label: "English (UK)" },
+                  { value: "id-ID", label: "Indonesia" },
+                ].map((lang) => {
+                  const isActive = draft.dictationLanguage === lang.value;
+                  return (
+                    <button
+                      key={lang.value}
+                      type="button"
+                      onClick={() =>
+                        setDraft({ ...draft, dictationLanguage: lang.value })
+                      }
+                      className={`px-2.5 py-2 rounded-lg text-xs font-medium border transition-colors cursor-pointer text-center ${
+                        isActive
+                          ? "bg-sky-50 text-sky-700 border-sky-400 ring-1 ring-sky-400/30"
+                          : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                      }`}
+                    >
+                      {lang.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </section>
 
