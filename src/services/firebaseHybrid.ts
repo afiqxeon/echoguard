@@ -17,7 +17,6 @@ const firebaseConfig = {
 const requiredEnvVars = [
   "VITE_FIREBASE_API_KEY",
   "VITE_FIREBASE_PROJECT_ID",
-  "VITE_RECAPTCHA_ENTERPRISE_SITE_KEY",
 ] as const;
 
 for (const key of requiredEnvVars) {
@@ -30,15 +29,16 @@ for (const key of requiredEnvVars) {
 
 const app = initializeApp(firebaseConfig);
 
-if (import.meta.env.DEV) {
-  (self as any).FIREBASE_APPCHECK_DEBUG_TOKEN =
-    import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
-}
+// Enable Firebase App Check debug token for local and staging debugging
+(self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN =
+  import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
+
+const recaptchaSiteKey =
+  import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY?.trim() ||
+  "dummy-key-for-localhost-debug";
 
 initializeAppCheck(app, {
-  provider: new ReCaptchaEnterpriseProvider(
-    import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY,
-  ),
+  provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
   isTokenAutoRefreshEnabled: true,
 });
 
@@ -54,6 +54,7 @@ const TTS_MODEL = import.meta.env.VITE_GEMINI_TTS_MODEL || "gemini-2.5-flash-pre
  */
 export async function generateSOAPNote(
   redactedTranscript: string,
+  modelName: string = "gemini-3.8-flash",
 ): Promise<string> {
   if (IS_MOCK_MODE) {
     return new Promise((resolve) => {
@@ -66,7 +67,7 @@ export async function generateSOAPNote(
   }
 
   try {
-    const model = getGenerativeModel(ai, { model: TEXT_MODEL });
+    const model = getGenerativeModel(ai, { model: modelName || TEXT_MODEL });
     const prompt = `You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.
 
 Transcript:
@@ -76,7 +77,7 @@ ${redactedTranscript}`;
     return result.response.text();
   } catch (error) {
     console.error("Cloud SOAP Synthesis Error:", error);
-    throw new Error("Failed to generate SOAP note via Firebase AI Logic.");
+    throw error;
   }
 }
 
@@ -241,7 +242,7 @@ export async function generateSingleVoicePreview(
     throw new Error("No audio data returned from voice preview.");
   } catch (error) {
     console.error("Single Voice Preview Error:", error);
-    throw new Error("Failed to generate voice preview via Firebase AI Logic.");
+    throw error;
   }
 }
 
@@ -254,6 +255,7 @@ export async function generateMedicalAudio(
     doctorVoice: "Fenrir",
     nurseVoice: "Aoede",
   },
+  modelName: string = "gemini-3.8-flash",
 ): Promise<{ audioUrl: string; script: string }> {
   if (IS_MOCK_MODE) {
     return {
@@ -264,7 +266,7 @@ export async function generateMedicalAudio(
 
   try {
     // 1. Synthesize concise clinical handoff dialogue from SOAP Note
-    const scriptModel = getGenerativeModel(ai, { model: TEXT_MODEL });
+    const scriptModel = getGenerativeModel(ai, { model: modelName || TEXT_MODEL });
     const scriptPrompt = `Convert the Assessment and Plan from this SOAP note into a concise 2-line clinical handoff dialogue between Doctor and Nurse. Format strictly as:
 Doctor: [sentence]
 Nurse: [sentence]
@@ -281,9 +283,7 @@ ${soapNote}`;
     return { audioUrl, script: dialogueScript };
   } catch (error) {
     console.error("Multi-Speaker TTS Error:", error);
-    throw new Error(
-      "Failed to generate multi-speaker audio via Firebase AI Logic.",
-    );
+    throw error;
   }
 }
 

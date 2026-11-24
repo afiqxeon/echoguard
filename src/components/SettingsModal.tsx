@@ -6,11 +6,14 @@ import {
   DEFAULT_SETTINGS,
 } from "../utils/settingsStorage";
 import { generateSingleVoicePreview } from "../services/firebaseHybrid";
+import { CLOUD_MODELS, type CloudModelId } from "../constants/models";
 
 interface SettingsModalProps {
   isOpen: boolean;
   settings: EchoGuardSettings;
   engineMode: "checking" | "nano" | "deterministic";
+  cloudModel: CloudModelId;
+  onCloudModelChange: (model: CloudModelId) => void;
   onClose: () => void;
   onSave: (updated: EchoGuardSettings) => boolean;
 }
@@ -19,6 +22,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   settings,
   engineMode,
+  cloudModel,
+  onCloudModelChange,
   onClose,
   onSave,
 }) => {
@@ -313,17 +318,42 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Section 3: Privacy & Runtime Diagnostics (Read-Only) */}
           <section
-            className="space-y-2 pt-4 border-t border-slate-100"
+            className="space-y-3 pt-4 border-t border-slate-100"
             style={{
               display: "flex",
               flexDirection: "column",
-              gap: "8px",
+              gap: "12px",
               paddingTop: "16px",
               borderTop: "1px solid #f1f5f9",
             }}
           >
+            {/* Cloud Inference Model Dropdown */}
+            <div>
+              <label
+                htmlFor="cloud-model-select"
+                className="block text-xs font-semibold text-slate-700 mb-1.5"
+              >
+                Cloud Inference Model (SOAP & Handoff Script)
+              </label>
+              <select
+                id="cloud-model-select"
+                value={cloudModel}
+                onChange={(e) => onCloudModelChange(e.target.value as CloudModelId)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+              >
+                {CLOUD_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Switch models if you hit free-tier daily quota limits or peak demand.
+              </p>
+            </div>
+
             <h3
-              className="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              className="text-xs font-semibold uppercase tracking-wider text-slate-500 pt-1"
               style={{
                 margin: 0,
                 fontSize: "11px",
@@ -335,44 +365,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               Privacy & Runtime Status
             </h3>
-            <div
-              className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600 space-y-1"
-              style={{
-                borderRadius: "8px",
-                backgroundColor: "#f8fafc",
-                border: "1px solid #e2e8f0",
-                padding: "12px",
-                fontSize: "12px",
-                color: "#475569",
-                display: "flex",
-                flexDirection: "column",
-                gap: "4px",
-              }}
-            >
-              <div
-                className="flex justify-between"
-                style={{ display: "flex", justifyContent: "space-between" }}
-              >
-                <span>Local Privacy Shield:</span>
-                <span
-                  className="font-medium text-emerald-700"
-                  style={{ fontWeight: 500, color: "#047857" }}
-                >
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Local Privacy Shield:</span>
+                <span className="font-medium text-emerald-700 text-right">
                   {engineMode === "nano"
                     ? "Gemini Nano + Deterministic Pre-Filter"
                     : "Deterministic Local Shield"}
                 </span>
               </div>
-              <div
-                className="flex justify-between"
-                style={{ display: "flex", justifyContent: "space-between" }}
-              >
-                <span>Cloud Guardrail:</span>
-                <span
-                  className="font-medium text-slate-800"
-                  style={{ fontWeight: 500, color: "#1e293b" }}
-                >
-                  Firebase App Check (reCAPTCHA Enterprise)
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Cloud Inference:</span>
+                <span className="font-medium text-slate-800 text-right">
+                  Firebase AI Logic ({CLOUD_MODELS.find((m) => m.id === cloudModel)?.label.split(" (")[0] || cloudModel})
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Cloud Guardrail:</span>
+                <span className="font-medium text-slate-800 text-right">
+                  Firebase App Check
                 </span>
               </div>
             </div>

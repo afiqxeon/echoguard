@@ -7,8 +7,14 @@ import {
 } from "./services/firebaseHybrid";
 import { redactPIIDeterministically } from "./utils/deterministicRedactor";
 import { useClinicalDictation } from "./hooks/useClinicalDictation";
-import { downloadFhirJson, downloadAudioWav } from "./utils/clinicalExport";
+import { downloadFhirJson } from "./utils/clinicalExport";
 import { SettingsModal } from "./components/SettingsModal";
+import { HowItWorksModal } from "./components/HowItWorksModal";
+import {
+  CLOUD_MODELS,
+  DEFAULT_CLOUD_MODEL,
+  type CloudModelId,
+} from "./constants/models";
 import {
   loadSettings,
   saveSettings,
@@ -110,7 +116,29 @@ export default function PIIRedactor() {
   );
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [cloudModel, setCloudModel] = useState<CloudModelId>(() => {
+    try {
+      const saved = localStorage.getItem("echoguard_cloud_model");
+      if (saved && CLOUD_MODELS.some((m) => m.id === saved)) {
+        return saved as CloudModelId;
+      }
+    } catch {
+      // Fallback on storage errors
+    }
+    return DEFAULT_CLOUD_MODEL;
+  });
+
+  const handleCloudModelChange = (model: CloudModelId) => {
+    setCloudModel(model);
+    try {
+      localStorage.setItem("echoguard_cloud_model", model);
+    } catch (err) {
+      console.warn("Failed to persist cloud model:", err);
+    }
+  };
+
   const [engineMode, setEngineMode] = useState<LocalEngineMode>("checking");
   const [input, setInput] = useState("");
   const [sampleIndex, setSampleIndex] = useState<number | null>(null);
@@ -138,6 +166,12 @@ export default function PIIRedactor() {
     null,
   );
   const [soapNote, setSoapNote] = useState("");
+  const [isSoapExpanded, setIsSoapExpanded] = useState(false);
+  const [soapError, setSoapError] = useState<{
+    title: string;
+    detail: string;
+  } | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [audioScript, setAudioScript] = useState<string>("");
   type PipelineStage = "idle" | "local" | "cloud" | "audio" | "done";
@@ -181,6 +215,7 @@ export default function PIIRedactor() {
 
   const handleRegenerateAudio = async () => {
     if (!audioScript || isRegeneratingAudio) return;
+    setAudioError(null);
     setIsRegeneratingAudio(true);
 
     try {
@@ -198,6 +233,66 @@ export default function PIIRedactor() {
       });
     } catch (err) {
       console.error("Failed to regenerate audio:", err);
+      setAudioError(
+        "Audio handoff model is temporarily busy. Click Retry Audio without re-running SOAP.",
+      );
+    } finally {
+      setIsRegeneratingAudio(false);
+    }
+  };
+
+  const handleRetryAudio = async () => {
+    if (!soapNote || isRegeneratingAudio) return;
+    setAudioError(null);
+    setIsRegeneratingAudio(true);
+    setPipelineStage("audio");
+    setEngineState("processing_audio");
+    setStatusMessage(
+      "Retrying multi-speaker audio via Firebase AI Logic...",
+    );
+
+    try {
+      const { audioUrl: generatedAudioUrl, script } =
+        await generateMedicalAudio(
+          soapNote,
+          {
+            doctorVoice: settings.doctorVoice,
+            nurseVoice: settings.nurseVoice,
+          },
+          cloudModel,
+        );
+      setAudioUrl(generatedAudioUrl);
+      setAudioScript(script);
+      setGeneratedVoices({
+        doctorVoice: settings.doctorVoice,
+        nurseVoice: settings.nurseVoice,
+      });
+
+      if (activeSessionId) {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === activeSessionId
+              ? {
+                  ...s,
+                  handoffScript: script,
+                  doctorVoice: settings.doctorVoice,
+                  nurseVoice: settings.nurseVoice,
+                }
+              : s,
+          ),
+        );
+      }
+
+      setEngineState("ready");
+      setStatusMessage("Pipeline Complete: Local Shield ➔ Cloud SOAP ➔ Cloud TTS.");
+      setPipelineStage("done");
+    } catch (err) {
+      console.error("Retry Audio Error:", err);
+      setAudioError(
+        "Audio handoff model is temporarily busy. Click Retry Audio without re-running SOAP.",
+      );
+      setEngineState("ready");
+      setPipelineStage("done");
     } finally {
       setIsRegeneratingAudio(false);
     }
@@ -209,6 +304,9 @@ export default function PIIRedactor() {
     }
     setAudioUrl("");
     setGeneratedVoices(null);
+    setSoapError(null);
+    setAudioError(null);
+    setIsSoapExpanded(false);
     setRedactedText(record.redactedTranscript);
     setSoapNote(record.soapNote);
     setAudioScript(record.handoffScript);
@@ -300,13 +398,146 @@ export default function PIIRedactor() {
     };
   }, []);
 
+  const classifySoapError = (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+
+    if (/429|quota|too many requests|rate.?limit/i.test(msg)) {
+      return {
+        title: "Daily cloud quota reached.",
+        detail:
+          "Local PII redaction is complete, but cloud SOAP synthesis is paused until the quota resets.",
+      };
+    }
+
+    if (/500|503|high demand|overloaded|temporarily/i.test(msg)) {
+      return {
+        title: "Cloud model is temporarily busy.",
+        detail:
+          "Your redacted payload is safe. Wait a few seconds and click Regenerate SOAP.",
+      };
+    }
+
+    return {
+      title: "Cloud SOAP synthesis failed.",
+      detail:
+        "Unable to reach Firebase AI Logic right now. Your redacted payload is preserved—click Regenerate SOAP to retry.",
+    };
+  };
+
+  const runCloudPipeline = async (
+    cleanPayload: string,
+    entitiesStrippedCount?: number,
+  ) => {
+    if (!cleanPayload.trim()) return;
+
+    setSoapError(null);
+    setAudioError(null);
+    setIsSoapExpanded(false);
+    setPipelineStage("cloud");
+    setEngineState("processing_cloud");
+    setStatusMessage(
+      "Step 2/3: Routing secured payload to Firebase Cloud for SOAP synthesis...",
+    );
+
+    let soapResult = "";
+
+    // --- STEP 2: Cloud SOAP Note ---
+    try {
+      soapResult = await generateSOAPNote(cleanPayload, cloudModel);
+      setSoapNote(soapResult);
+    } catch (err) {
+      console.error("Cloud SOAP Synthesis Error:", err);
+      const parsedError = classifySoapError(err);
+      setSoapError(parsedError);
+      setEngineState("error");
+      setStatusMessage(parsedError.title);
+      return; // Stop here if SOAP fails
+    }
+
+    const totalRedacted =
+      entitiesStrippedCount ??
+      (cleanPayload.match(/\[REDACTED\]/g) || []).length;
+
+    let currentSessions = saveSession({
+      redactedTranscript: cleanPayload,
+      soapNote: soapResult,
+      handoffScript: "",
+      entitiesStripped: totalRedacted,
+      doctorVoice: settings.doctorVoice,
+      nurseVoice: settings.nurseVoice,
+    });
+    setSessions(currentSessions);
+    const savedId = currentSessions[0]?.id ?? null;
+    setActiveSessionId(savedId);
+
+    // --- STEP 3: Multi-Speaker Audio (Separated from SOAP) ---
+    try {
+      setPipelineStage("audio");
+      setEngineState("processing_audio");
+      setStatusMessage(
+        "Step 3/3: Generating expressive multi-speaker audio via Firebase AI Logic...",
+      );
+
+      const { audioUrl: generatedAudioUrl, script } =
+        await generateMedicalAudio(
+          soapResult,
+          {
+            doctorVoice: settings.doctorVoice,
+            nurseVoice: settings.nurseVoice,
+          },
+          cloudModel,
+        );
+      setAudioUrl(generatedAudioUrl);
+      setAudioScript(script);
+      setGeneratedVoices({
+        doctorVoice: settings.doctorVoice,
+        nurseVoice: settings.nurseVoice,
+      });
+
+      if (savedId) {
+        currentSessions = currentSessions.map((s) =>
+          s.id === savedId
+            ? {
+                ...s,
+                handoffScript: script,
+              }
+            : s,
+        );
+        setSessions(currentSessions);
+      }
+
+      setEngineState("ready");
+      setStatusMessage(
+        "Pipeline Complete: Local Shield ➔ Cloud SOAP ➔ Cloud TTS.",
+      );
+      setPipelineStage("done");
+    } catch (err) {
+      console.error("Multi-Speaker TTS Error:", err);
+      setAudioError(
+        "Audio handoff model is temporarily busy. Click Retry Audio without re-running SOAP.",
+      );
+      setEngineState("ready");
+      setStatusMessage("SOAP note generated. Audio handoff paused.");
+      setPipelineStage("done");
+    }
+  };
+
+  const handleRegenerateSOAP = () => {
+    if (redactedText) {
+      void runCloudPipeline(redactedText, privacyAudit?.entitiesStripped);
+    }
+  };
+
   const handleProcessPipeline = async () => {
     if (isListening) {
       stopListening();
     }
-    if (!input.trim()) return;
+    if (!input.trim() || isProcessing) return;
 
     // Reset Pipeline States
+    setSoapError(null);
+    setAudioError(null);
+    setIsSoapExpanded(false);
     setPipelineStage("local");
     setRedactedText("");
     setPrivacyAudit(null);
@@ -395,8 +626,9 @@ export default function PIIRedactor() {
       setRedactedText(sanitizedPayload);
 
       const totalRedactedTags = (sanitizedPayload.match(/\[REDACTED\]/g) || []).length;
+      const strippedCount = Math.max(preFiltered.entitiesRedacted, totalRedactedTags);
       setPrivacyAudit({
-        entitiesStripped: Math.max(preFiltered.entitiesRedacted, totalRedactedTags),
+        entitiesStripped: strippedCount,
         verifiedAt: new Date().toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
@@ -404,59 +636,13 @@ export default function PIIRedactor() {
         }),
       });
 
-      // --- STEP 2: CLOUD INFERENCE (SOAP NOTE) ---
-      setPipelineStage("cloud");
-      setEngineState("processing_cloud");
-      setStatusMessage(
-        "Step 2/3: Routing secured payload to Firebase Cloud for SOAP synthesis...",
-      );
-      const generatedSoap = await generateSOAPNote(sanitizedPayload);
-      setSoapNote(generatedSoap);
-
-      // --- STEP 3: CLOUD TTS (MULTI-SPEAKER AUDIO) ---
-      setPipelineStage("audio");
-      setEngineState("processing_audio");
-      setStatusMessage(
-        "Step 3/3: Generating expressive multi-speaker audio via Firebase AI Logic...",
-      );
-      const { audioUrl: generatedAudioUrl, script } =
-        await generateMedicalAudio(generatedSoap, {
-          doctorVoice: settings.doctorVoice,
-          nurseVoice: settings.nurseVoice,
-        });
-      setAudioUrl(generatedAudioUrl);
-      setAudioScript(script);
-      setGeneratedVoices({
-        doctorVoice: settings.doctorVoice,
-        nurseVoice: settings.nurseVoice,
-      });
-
-      const updatedSessions = saveSession({
-        redactedTranscript: sanitizedPayload,
-        soapNote: generatedSoap,
-        handoffScript: script,
-        entitiesStripped: Math.max(
-          preFiltered.entitiesRedacted,
-          totalRedactedTags,
-        ),
-        doctorVoice: settings.doctorVoice,
-        nurseVoice: settings.nurseVoice,
-      });
-      setSessions(updatedSessions);
-      setActiveSessionId(updatedSessions[0]?.id ?? null);
-
-      setEngineState("ready");
-      setStatusMessage(
-        "Pipeline Complete: Local Shield ➔ Cloud SOAP ➔ Cloud TTS.",
-      );
-      setPipelineStage("done");
+      // Hand off sanitized payload to Cloud Pipeline
+      await runCloudPipeline(sanitizedPayload, strippedCount);
     } catch (error) {
-      console.error("Pipeline Execution Error:", error);
+      console.error("Local Redaction Error:", error);
       setPipelineStage("idle");
       setEngineState("error");
-      setStatusMessage(
-        "Pipeline failed. Please verify local and cloud states.",
-      );
+      setStatusMessage("Local redaction failed. Please verify local state.");
     }
   };
 
@@ -466,6 +652,9 @@ export default function PIIRedactor() {
     }
     setInput(sampleText);
     setPipelineStage("idle");
+    setSoapError(null);
+    setAudioError(null);
+    setIsSoapExpanded(false);
     setRedactedText("");
     setPrivacyAudit(null);
     setSoapNote("");
@@ -484,6 +673,9 @@ export default function PIIRedactor() {
     }
     setInput("");
     setSampleIndex(null);
+    setSoapError(null);
+    setAudioError(null);
+    setIsSoapExpanded(false);
     setRedactedText("");
     setSoapNote("");
     setAudioScript("");
@@ -565,7 +757,7 @@ export default function PIIRedactor() {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50 transition-colors"
               >
                 <span>+</span>
-                <span>New Session</span>
+                <span>New Encounter</span>
               </button>
 
               <button
@@ -574,6 +766,15 @@ export default function PIIRedactor() {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors"
               >
                 <span>Settings</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsHelpOpen(true)}
+                title="How EchoGuard Works"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors cursor-pointer"
+              >
+                ?
               </button>
             </div>
           </div>
@@ -630,7 +831,7 @@ export default function PIIRedactor() {
           <div className="p-3 space-y-2 overflow-y-auto flex-1 lg:max-h-[calc(100vh-120px)]">
             {sessions.length === 0 ? (
               <p className="text-xs text-slate-400 italic p-2">
-                No saved sessions yet. Run the pipeline to save a de-identified encounter locally.
+                No saved encounters yet. Run the pipeline to save a de-identified encounter locally.
               </p>
             ) : (
               sessions.map((item) => {
@@ -947,7 +1148,7 @@ export default function PIIRedactor() {
                   </span>
                 )}
               </div>
-              <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap min-h-16">
+              <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap">
                 {redactedText || (
                   <span className="text-slate-400 italic">
                     Sanitized stream will appear here...
@@ -956,14 +1157,13 @@ export default function PIIRedactor() {
               </p>
 
               {privacyAudit && (
-                <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                    {privacyAudit.entitiesStripped} PII{" "}
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
+                    • {privacyAudit.entitiesStripped} PII{" "}
                     {privacyAudit.entitiesStripped === 1 ? "Entity" : "Entities"}{" "}
                     Stripped Locally • 0 Bytes PII Sent to Cloud
                   </span>
-                  <span className="text-slate-400">
+                  <span className="text-[11px] text-slate-400">
                     Verified {privacyAudit.verifiedAt}
                   </span>
                 </div>
@@ -971,126 +1171,228 @@ export default function PIIRedactor() {
             </section>
 
             {/* Card 2: Cloud SOAP Note Synthesis (Order 2 on mobile, 7/12 right 2-rows on desktop) */}
-            <section className="xl:col-span-7 xl:row-span-2 bg-white rounded-xl border border-sky-200/80 shadow-xs p-5">
-              <div className="flex items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-100">
-                <h3 className="text-sm font-semibold text-sky-900 whitespace-nowrap">
+            <section className="xl:col-span-7 xl:row-span-2 flex flex-col bg-white rounded-xl border border-sky-200/80 shadow-xs p-5">
+              {/* Header Kartu 2 */}
+              <div className="flex items-center justify-between gap-2 mb-3 pb-3 border-b border-slate-100">
+                <h2 className="text-sm font-semibold text-slate-900">
                   2. Cloud SOAP Note Synthesis
-                </h3>
-                <span className="shrink-0 whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-sky-50 text-sky-700 border border-sky-200">
-                  Cloud Inference
-                </span>
+                </h2>
+                <div className="flex items-center gap-2">
+                  {!soapError && redactedText && (
+                    <button
+                      type="button"
+                      onClick={handleRegenerateSOAP}
+                      disabled={isProcessing}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      <span>{isProcessing ? "Generating..." : "↻ Regenerate"}</span>
+                    </button>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                    CLOUD INFERENCE
+                  </span>
+                </div>
               </div>
 
-              <div className="text-sm leading-relaxed text-slate-800 min-h-60">
-                {soapNote ? (
-                  <ReactMarkdown
-                    components={{
-                      h2: ({ node: _node, ...props }) => (
-                        <h2
-                          className="text-base font-bold text-sky-950 mb-3 mt-4 first:mt-0"
-                          {...props}
-                        />
-                      ),
-                      p: ({ node: _node, ...props }) => (
-                        <p className="mb-3 leading-relaxed" {...props} />
-                      ),
-                      ul: ({ node: _node, ...props }) => (
-                        <ul className="mb-3 pl-5 list-disc space-y-1" {...props} />
-                      ),
-                      ol: ({ node: _node, ...props }) => (
-                        <ol className="mb-3 pl-5 list-decimal space-y-1" {...props} />
-                      ),
-                    }}
-                  >
-                    {soapNote}
-                  </ReactMarkdown>
-                ) : (
-                  <p className="text-slate-400 italic">
-                    {isProcessing && engineState === "processing_cloud"
-                      ? "Analyzing secured payload in Firebase AI..."
-                      : "Awaiting secure payload..."}
-                  </p>
-                )}
-              </div>
+              {/* Banner Error (muncul saat 429 / 500 / network error) */}
+              {soapError && (
+                <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-amber-900">{soapError.title}</p>
+                      <p className="mt-1 text-xs text-amber-800 leading-relaxed">
+                        {soapError.detail}
+                      </p>
+                    </div>
+                    {redactedText && (
+                      <button
+                        type="button"
+                        onClick={handleRegenerateSOAP}
+                        disabled={isProcessing}
+                        className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 transition-colors cursor-pointer"
+                      >
+                        <span>{isProcessing ? "Retrying..." : "↻ Regenerate SOAP"}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
 
-              {soapNote && (
-                <div className="mt-4 pt-3 border-t border-sky-100 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleCopySoap}
-                    className="px-3 py-1.5 rounded-md text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer"
-                  >
-                    {copied ? "Copied to Clipboard ✓" : "Copy SOAP Note"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadFhirJson({
-                        soapNote,
-                        redactedTranscript: redactedText,
-                        handoffScript: audioScript,
-                        localEngine: engineMode,
-                      })
-                    }
-                    className="px-3 py-1.5 rounded-md text-xs font-medium bg-sky-600 text-white hover:bg-sky-700 transition-colors cursor-pointer"
-                  >
-                    Export HL7 FHIR JSON
-                  </button>
+              {soapNote ? (
+                <>
+                  {/* Area Konten SOAP */}
+                  <div className="flex-1 flex flex-col">
+                    <div
+                      className={`relative transition-all duration-300 ${
+                        isSoapExpanded ? "max-h-none" : "max-h-[500px] overflow-hidden"
+                      }`}
+                    >
+                      <div className="text-sm leading-relaxed text-slate-800">
+                        <ReactMarkdown
+                          components={{
+                            h2: ({ node: _node, ...props }) => (
+                              <h2
+                                className="text-base font-bold text-sky-950 mb-3 mt-4 first:mt-0"
+                                {...props}
+                              />
+                            ),
+                            p: ({ node: _node, ...props }) => (
+                              <p className="mb-3 leading-relaxed" {...props} />
+                            ),
+                            ul: ({ node: _node, ...props }) => (
+                              <ul className="mb-3 pl-5 list-disc space-y-1" {...props} />
+                            ),
+                            ol: ({ node: _node, ...props }) => (
+                              <ol className="mb-3 pl-5 list-decimal space-y-1" {...props} />
+                            ),
+                          }}
+                        >
+                          {soapNote}
+                        </ReactMarkdown>
+                      </div>
+
+                      {/* Gradient fade overlay when folded */}
+                      {!isSoapExpanded && soapNote.length > 500 && (
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/90 to-transparent" />
+                      )}
+                    </div>
+
+                    {/* Expand / Collapse toggle button */}
+                    {soapNote.length > 500 && (
+                      <button
+                        type="button"
+                        onClick={() => setIsSoapExpanded((prev) => !prev)}
+                        className="mt-2 self-center inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors cursor-pointer"
+                      >
+                        <span>{isSoapExpanded ? "▲ Collapse SOAP Note" : "▼ Expand Full SOAP Note"}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Footer Tombol Aksi — menempel rapi di bawah dengan mt-auto */}
+                  <div className="mt-auto pt-4">
+                    <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                      <button
+                        type="button"
+                        onClick={handleCopySoap}
+                        className="px-3 py-1.5 rounded-md text-xs font-medium bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 transition-colors cursor-pointer"
+                      >
+                        {copied ? "Copied to Clipboard ✓" : "Copy SOAP Note"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadFhirJson({
+                            soapNote,
+                            redactedTranscript: redactedText,
+                            handoffScript: audioScript,
+                            localEngine: engineMode,
+                          })
+                        }
+                        className="px-3 py-1.5 rounded-md text-xs font-medium bg-sky-600 text-white hover:bg-sky-700 transition-colors cursor-pointer"
+                      >
+                        Export HL7 FHIR JSON
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm leading-relaxed text-slate-800 min-h-60">
+                  {soapError ? (
+                    <p className="text-slate-400 italic">
+                      SOAP synthesis paused due to cloud error. Click "↻ Regenerate SOAP" above to retry.
+                    </p>
+                  ) : (
+                    <p className="text-slate-400 italic">
+                      {isProcessing && engineState === "processing_cloud"
+                        ? "Analyzing secured payload in Firebase AI..."
+                        : "Awaiting secure payload..."}
+                    </p>
+                  )}
                 </div>
               )}
             </section>
 
             {/* Card 3: Multi-Speaker Action Plan — always displayed bottom-left */}
             <section className="xl:col-span-5 bg-rose-50/40 rounded-xl border border-rose-200/80 shadow-xs p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <h3 className="text-sm font-semibold text-rose-900">
-                  3. Multi-Speaker Action Plan (Doctor & Nurse)
-                </h3>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="whitespace-nowrap px-2 py-0.5 rounded-md text-[10px] font-semibold uppercase tracking-wider bg-rose-100/70 text-rose-700 border border-rose-200">
-                    Firebase TTS
-                  </span>
+              {/* Header Blok 3 — seragam dengan Blok 1 & 2 */}
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h2 className="text-sm font-semibold text-rose-900">
+                  3. Multi-Speaker Action Plan (Doctor &amp; Nurse)
+                </h2>
+                <div className="flex items-center gap-2">
                   {audioUrl && (
-                    <button
-                      type="button"
-                      onClick={() => downloadAudioWav(audioUrl)}
-                      className="whitespace-nowrap px-2.5 py-1 rounded-md text-xs font-medium bg-white text-rose-700 border border-rose-200 hover:bg-rose-50 transition-colors cursor-pointer"
+                    <a
+                      href={audioUrl}
+                      download="echoguard-handoff.wav"
+                      className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-50 transition-colors"
                     >
                       Download WAV
-                    </button>
+                    </a>
                   )}
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-700 border border-rose-200">
+                    FIREBASE TTS
+                  </span>
                 </div>
               </div>
 
-              {!audioScript && pipelineStage !== "audio" ? (
-                <p className="text-sm text-rose-400 italic py-4">
-                  Awaiting SOAP synthesis to generate Doctor &amp; Nurse audio handoff...
-                </p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-white/80 text-rose-800 border border-rose-200">
-                        Doctor: {activeDoctorLabel}
-                      </span>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-white/80 text-rose-800 border border-rose-200">
-                        Nurse: {activeNurseLabel}
-                      </span>
-                    </div>
+              {/* Baris Profil Suara (lebih bersih & ringkas) */}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-rose-200 bg-white px-2.5 py-0.5 font-medium text-rose-800">
+                    Doctor: {activeDoctorLabel}
+                  </span>
+                  <span className="rounded-full border border-rose-200 bg-white px-2.5 py-0.5 font-medium text-rose-800">
+                    Nurse: {activeNurseLabel}
+                  </span>
+                </div>
 
-                    {isAudioOutdated && (
+                {isAudioOutdated && (
+                  <button
+                    type="button"
+                    onClick={handleRegenerateAudio}
+                    disabled={isRegeneratingAudio}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 disabled:opacity-50 transition-colors cursor-pointer"
+                  >
+                    {isRegeneratingAudio
+                      ? "Regenerating Audio..."
+                      : "Voice settings changed • Regenerate Audio"}
+                  </button>
+                )}
+              </div>
+
+              {/* Audio Error Alert */}
+              {audioError && (
+                <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-amber-900">Audio Handoff Paused</p>
+                      <p className="mt-1 text-xs text-amber-800 leading-relaxed">
+                        {audioError}
+                      </p>
+                    </div>
+                    {soapNote && (
                       <button
                         type="button"
-                        onClick={handleRegenerateAudio}
+                        onClick={handleRetryAudio}
                         disabled={isRegeneratingAudio}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 disabled:opacity-50 transition-colors cursor-pointer"
+                        className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 transition-colors cursor-pointer"
                       >
-                        {isRegeneratingAudio
-                          ? "Regenerating Audio..."
-                          : "Voice settings changed • Regenerate Audio"}
+                        <span>{isRegeneratingAudio ? "Retrying..." : "↻ Retry Audio"}</span>
                       </button>
                     )}
                   </div>
+                </div>
+              )}
+
+              {!audioScript && pipelineStage !== "audio" ? (
+                audioError ? null : (
+                  <p className="text-sm text-rose-400 italic py-4">
+                    Awaiting SOAP synthesis to generate Doctor &amp; Nurse audio handoff...
+                  </p>
+                )
+              ) : (
+                <>
 
                   {pipelineStage === "audio" || isRegeneratingAudio ? (
                     <div className="p-4 bg-white/80 rounded-lg border border-pink-200 flex items-center gap-3 text-rose-900">
@@ -1202,6 +1504,8 @@ export default function PIIRedactor() {
         isOpen={isSettingsOpen}
         settings={settings}
         engineMode={engineMode}
+        cloudModel={cloudModel}
+        onCloudModelChange={handleCloudModelChange}
         onClose={() => setIsSettingsOpen(false)}
         onSave={(updated) => {
           const saved = saveSettings(updated);
@@ -1210,6 +1514,12 @@ export default function PIIRedactor() {
           }
           return saved;
         }}
+      />
+
+      {/* How EchoGuard Works Modal */}
+      <HowItWorksModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
       />
     </div>
   );
