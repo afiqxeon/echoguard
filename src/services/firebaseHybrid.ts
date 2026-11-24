@@ -80,11 +80,180 @@ ${redactedTranscript}`;
   }
 }
 
+export interface SpeakerVoiceSelection {
+  doctorVoice: string;
+  nurseVoice: string;
+}
+
+async function fetchSingleSpeakerPcm(
+  text: string,
+  voiceName: string,
+): Promise<Uint8Array> {
+  const ttsModel = getGenerativeModel(ai, {
+    model: TTS_MODEL,
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName },
+        },
+      },
+    } as any,
+  });
+
+  const result = await ttsModel.generateContent(text);
+  const response = result.response as any;
+  const inlinePart =
+    response.inlineDataParts?.()?.[0] ||
+    response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+
+  const base64Data = inlinePart?.inlineData?.data;
+  if (!base64Data) {
+    throw new Error(`No audio data returned for voice: ${voiceName}`);
+  }
+
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Converts a clinical handoff script into multi-speaker dialogue audio
+ * by generating guaranteed single-speaker voice turns in parallel and concatenating PCM segments.
+ */
+export async function generateMultiSpeakerAudio(
+  handoffScript: string,
+  voiceConfig: SpeakerVoiceSelection = {
+    doctorVoice: "Fenrir",
+    nurseVoice: "Aoede",
+  },
+): Promise<string> {
+  if (IS_MOCK_MODE) {
+    return "https://actions.google.com/sounds/v1/alarms/beep_short.ogg";
+  }
+
+  // Parse script turns (Doctor: ... / Nurse: ...)
+  const lines = handoffScript
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const turns = lines.map((line) => {
+    if (/^nurse\s*:/i.test(line)) {
+      return {
+        voice: voiceConfig.nurseVoice,
+        text: line.replace(/^nurse\s*:/i, "").trim(),
+      };
+    }
+    return {
+      voice: voiceConfig.doctorVoice,
+      text: line.replace(/^doctor\s*:/i, "").trim(),
+    };
+  });
+
+  // Generate all turns in parallel with guaranteed single-speaker voice accuracy
+  const pcmSegments = await Promise.all(
+    turns.map((turn) => fetchSingleSpeakerPcm(turn.text, turn.voice)),
+  );
+
+  // 350ms silence gap at 24kHz, 16-bit mono (24000 * 2 bytes * 0.35s = 16800 bytes)
+  const silenceGap = new Uint8Array(16800);
+  const totalLength =
+    pcmSegments.reduce((acc, seg) => acc + seg.length, 0) +
+    silenceGap.length * Math.max(0, pcmSegments.length - 1);
+
+  const combinedPcm = new Uint8Array(totalLength);
+  let offset = 0;
+  pcmSegments.forEach((seg, idx) => {
+    combinedPcm.set(seg, offset);
+    offset += seg.length;
+    if (idx < pcmSegments.length - 1) {
+      combinedPcm.set(silenceGap, offset);
+      offset += silenceGap.length;
+    }
+  });
+
+  // Wrap combinedPcm with WAV RIFF header
+  return pcmBytesToWavUrl(combinedPcm, 24000);
+}
+
+const VOICE_PREVIEW_LINES: Record<string, string> = {
+  // Doctor profiles
+  Fenrir: "Please obtain a stat 12-lead ECG and prepare baseline cardiac labs.",
+  Orus: "We need continuous telemetry and IV access started right away.",
+  Kore: "Let's rule out acute coronary syndrome and order a portable chest X-ray.",
+  // Nurse profiles
+  Aoede: "Understood, Doctor. I am setting up the telemetry monitor and vitals now.",
+  Leda: "Copy that. Preparing the 12-lead ECG and IV line immediately.",
+  Puck: "Got it, Doctor. Labs and portable chest X-ray are on the way.",
+};
+
+/**
+ * Generates an isolated single-speaker audio preview for voice selection.
+ *
+ * @param voiceName - The Gemini TTS voice profile name (e.g., "Fenrir", "Aoede").
+ * @param role - The clinical role ("Doctor" or "Nurse").
+ * @returns A Blob object URL for preview playback.
+ */
+export async function generateSingleVoicePreview(
+  voiceName: string,
+  role: "Doctor" | "Nurse",
+): Promise<string> {
+  if (IS_MOCK_MODE) {
+    return "https://actions.google.com/sounds/v1/alarms/beep_short.ogg";
+  }
+
+  try {
+    const ttsModel = getGenerativeModel(ai, {
+      model: TTS_MODEL,
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName },
+          },
+        },
+      } as any,
+    });
+
+    const sampleLine =
+      VOICE_PREVIEW_LINES[voiceName] ||
+      (role === "Doctor"
+        ? "Please obtain a stat 12-lead ECG and monitor vitals closely."
+        : "Understood, Doctor. Preparing the monitor and orders right away.");
+
+    const result = await ttsModel.generateContent(sampleLine);
+    const response = result.response as any;
+    const inlinePart =
+      response.inlineDataParts?.()?.[0] ||
+      response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+
+    if (inlinePart?.inlineData?.data) {
+      const mimeType = inlinePart.inlineData.mimeType || "";
+      return mimeType.includes("pcm") || mimeType.includes("L16")
+        ? pcmBase64ToWavUrl(inlinePart.inlineData.data, 24000)
+        : `data:${mimeType || "audio/wav"};base64,${inlinePart.inlineData.data}`;
+    }
+
+    throw new Error("No audio data returned from voice preview.");
+  } catch (error) {
+    console.error("Single Voice Preview Error:", error);
+    throw new Error("Failed to generate voice preview via Firebase AI Logic.");
+  }
+}
+
 /**
  * Converts the medical plan into multi-speaker dialogue audio.
  */
 export async function generateMedicalAudio(
   soapNote: string,
+  voiceConfig: SpeakerVoiceSelection = {
+    doctorVoice: "Fenrir",
+    nurseVoice: "Aoede",
+  },
 ): Promise<{ audioUrl: string; script: string }> {
   if (IS_MOCK_MODE) {
     return {
@@ -107,44 +276,9 @@ ${soapNote}`;
     const dialogueScript = scriptResult.response.text();
 
     // 2. Render multi-speaker dialogue audio using Gemini TTS
-    const ttsModel = getGenerativeModel(ai, {
-      model: TTS_MODEL,
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          multiSpeakerVoiceConfig: {
-            speakerVoiceConfigs: [
-              {
-                speaker: "Doctor",
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } },
-              },
-              {
-                speaker: "Nurse",
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } },
-              },
-            ],
-          },
-        },
-      } as any,
-    });
+    const audioUrl = await generateMultiSpeakerAudio(dialogueScript, voiceConfig);
 
-    const audioResult = await ttsModel.generateContent(dialogueScript);
-    const response = audioResult.response as any;
-    const inlinePart =
-      response.inlineDataParts?.()?.[0] ||
-      response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-
-    if (inlinePart?.inlineData?.data) {
-      const mimeType = inlinePart.inlineData.mimeType || "";
-      const audioUrl =
-        mimeType.includes("pcm") || mimeType.includes("L16")
-          ? pcmBase64ToWavUrl(inlinePart.inlineData.data, 24000)
-          : `data:${mimeType || "audio/wav"};base64,${inlinePart.inlineData.data}`;
-
-      return { audioUrl, script: dialogueScript };
-    }
-
-    throw new Error("No audio data returned from TTS model.");
+    return { audioUrl, script: dialogueScript };
   } catch (error) {
     console.error("Multi-Speaker TTS Error:", error);
     throw new Error(
@@ -154,20 +288,14 @@ ${soapNote}`;
 }
 
 /**
- * Encapsulates raw linear PCM base64 audio data with a 44-byte RIFF/WAVE header
+ * Encapsulates raw linear PCM bytes with a 44-byte RIFF/WAVE header
  * to produce a playable Blob URL compatible with HTML5 <audio> elements.
  *
- * @param base64Pcm - Raw base64-encoded PCM audio data.
+ * @param pcmBytes - Raw Uint8Array containing 16-bit linear PCM audio.
  * @param sampleRate - Sampling rate in Hz (default: 24000).
  * @returns A Blob object URL for native browser audio playback.
  */
-export function pcmBase64ToWavUrl(base64Pcm: string, sampleRate = 24000): string {
-  const binaryString = atob(base64Pcm);
-  const pcmBytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    pcmBytes[i] = binaryString.charCodeAt(i);
-  }
-
+export function pcmBytesToWavUrl(pcmBytes: Uint8Array, sampleRate = 24000): string {
   const wavBuffer = new ArrayBuffer(44 + pcmBytes.length);
   const view = new DataView(wavBuffer);
 
@@ -194,4 +322,23 @@ export function pcmBase64ToWavUrl(base64Pcm: string, sampleRate = 24000): string
   new Uint8Array(wavBuffer, 44).set(pcmBytes);
   const blob = new Blob([wavBuffer], { type: "audio/wav" });
   return URL.createObjectURL(blob);
+}
+
+export const createWavUrlFromPcm = pcmBytesToWavUrl;
+
+/**
+ * Encapsulates raw linear PCM base64 audio data with a 44-byte RIFF/WAVE header
+ * to produce a playable Blob URL compatible with HTML5 <audio> elements.
+ *
+ * @param base64Pcm - Raw base64-encoded PCM audio data.
+ * @param sampleRate - Sampling rate in Hz (default: 24000).
+ * @returns A Blob object URL for native browser audio playback.
+ */
+export function pcmBase64ToWavUrl(base64Pcm: string, sampleRate = 24000): string {
+  const binaryString = atob(base64Pcm);
+  const pcmBytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    pcmBytes[i] = binaryString.charCodeAt(i);
+  }
+  return pcmBytesToWavUrl(pcmBytes, sampleRate);
 }
