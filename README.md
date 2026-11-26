@@ -161,20 +161,34 @@ npm run lint && npm run build
 ```text
 src/
 ├── components/
-│   ├── HowItWorksModal.tsx        # Zero-trust hybrid architecture walkthrough modal
-│   └── SettingsModal.tsx          # Cloud model & Doctor/Nurse voice profile controls
+│   ├── common/
+│   │   └── SpinnerIcon.tsx            # Reusable loading indicator
+│   ├── layout/
+│   │   ├── EncounterSidebar.tsx       # Zero-PII local encounter history sidebar
+│   │   └── Navbar.tsx                 # Hybrid status badge, + New Encounter & Settings controls
+│   ├── workspace/
+│   │   ├── AudioHandoffCard.tsx       # Card 3: Multi-speaker Doctor & Nurse TTS + WAV download
+│   │   ├── LocalPayloadCard.tsx       # Card 1: Sanitized transcript & Zero-PII audit receipt
+│   │   ├── SoapNoteCard.tsx           # Card 2: Structured SOAP note, copy & HL7 FHIR JSON export
+│   │   └── TranscriptInputCard.tsx    # Transcript input, encounter lock-down, mic & 3-step tracker
+│   ├── HowItWorksModal.tsx            # Zero-trust hybrid architecture walkthrough modal
+│   └── SettingsModal.tsx              # Cloud model & Doctor/Nurse voice profile controls
 ├── constants/
-│   └── models.ts                  # Supported Cloud Gemini model options
+│   ├── models.ts                      # Supported Cloud Gemini model options
+│   └── sampleNotes.ts                 # Built-in clinical sample transcripts
 ├── hooks/
-│   └── useClinicalDictation.ts    # Web Speech API live microphone dictation hook
+│   └── useClinicalDictation.ts        # Web Speech API live microphone dictation hook
 ├── services/
-│   └── firebaseHybrid.ts          # AI Logic (Nano + Cloud + TTS), App Check, Remote Config & PCM cache
+│   └── firebaseHybrid.ts              # AI Logic (Nano + Cloud + TTS), App Check, Remote Config & PCM cache
+├── types/
+│   ├── clinical.ts                    # Pipeline stage, engine mode, audit receipt & session types
+│   └── settings.ts                    # Voice profile & application settings types
 ├── utils/
-│   ├── clinicalExport.ts          # HL7 FHIR JSON & WAV export helpers
-│   ├── deterministicRedactor.ts   # Fail-closed local PII redactor (names, caregivers, DOB, MRN, phone)
-│   ├── sessionStorage.ts          # Zero-PII localStorage encounter history
-│   └── settingsStorage.ts         # Persistent user preferences & voice options
-└── PIIRedactor.tsx                # Hybrid pipeline UI, Live Mic Dictation & encounter lock-down
+│   ├── clinicalExport.ts              # HL7 FHIR JSON & WAV export helpers
+│   ├── deterministicRedactor.ts       # Fail-closed local PII redactor (names, caregivers, DOB, MRN, phone)
+│   ├── sessionStorage.ts              # Zero-PII localStorage encounter history
+│   └── settingsStorage.ts             # Persistent user preferences & voice options
+└── PIIRedactor.tsx                    # Main hybrid pipeline orchestrator
 ```
 
 ---
@@ -182,6 +196,8 @@ src/
 ## Disclaimer
 
 EchoGuard is a technical prototype demonstrating zero-trust hybrid AI for telehealth workflows. It is not a certified medical device and should not be used for real patient diagnosis or treatment without qualified clinical review.
+
+Built by **Taufiqurrohman** ([@afiqxeon](https://github.com/afiqxeon)) — powered by Firebase AI Logic, Gemini Nano, and Gemini Cloud.
 
 ## License
 
