@@ -30,9 +30,9 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
   onGenerateAudio,
 }) => {
   return (
-    <section className="xl:col-span-5 bg-rose-50/40 rounded-xl border border-rose-200/80 shadow-xs p-5">
+    <section className="xl:col-span-5 bg-indigo-50/40 rounded-xl border border-indigo-200 shadow-xs p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <h2 className="text-sm font-semibold text-rose-900">
+        <h2 className="text-sm font-semibold text-indigo-950">
           3. Multi-Speaker Action Plan (Doctor &amp; Nurse)
         </h2>
         <div className="flex items-center gap-2">
@@ -40,12 +40,12 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
             <a
               href={audioUrl}
               download="echoguard-handoff.wav"
-              className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-50 transition-colors"
+              className="inline-flex items-center gap-1 rounded-md border border-indigo-200 bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-700 hover:bg-indigo-50 transition-colors"
             >
               Download WAV
             </a>
           )}
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-100 text-rose-700 border border-rose-200">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
             FIREBASE TTS
           </span>
         </div>
@@ -53,10 +53,10 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-rose-200 bg-white px-2.5 py-0.5 font-medium text-rose-800">
+          <span className="rounded-full border border-indigo-200 bg-white px-2.5 py-0.5 font-medium text-indigo-700">
             Doctor: {activeDoctorLabel}
           </span>
-          <span className="rounded-full border border-rose-200 bg-white px-2.5 py-0.5 font-medium text-rose-800">
+          <span className="rounded-full border border-indigo-200 bg-white px-2.5 py-0.5 font-medium text-indigo-700">
             Nurse: {activeNurseLabel}
           </span>
         </div>
@@ -76,11 +76,11 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
       </div>
 
       {audioError && (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-sm">
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-3.5 text-sm">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
-              <p className="font-semibold text-amber-900">Audio Handoff Paused</p>
-              <p className="mt-1 text-xs text-amber-800 leading-relaxed">
+              <p className="font-semibold text-rose-900">Audio Handoff Paused</p>
+              <p className="mt-1 text-xs text-rose-800 leading-relaxed">
                 {audioError}
               </p>
             </div>
@@ -89,7 +89,7 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
                 type="button"
                 onClick={onGenerateAudio}
                 disabled={isRegeneratingAudio}
-                className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 transition-colors cursor-pointer"
+                className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50 transition-colors cursor-pointer"
               >
                 <span>
                   {isRegeneratingAudio ? "Retrying..." : "↻ Retry Audio"}
@@ -102,20 +102,20 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
 
       {!soapNote && !audioScript && pipelineStage !== "audio" ? (
         audioError ? null : (
-          <p className="text-sm text-rose-400 italic py-4">
+          <p className="text-sm text-indigo-400 italic py-4">
             Awaiting SOAP synthesis to generate Doctor &amp; Nurse audio handoff...
           </p>
         )
       ) : (
         <>
           {pipelineStage === "audio" || isRegeneratingAudio ? (
-            <div className="p-4 bg-white/80 rounded-lg border border-pink-200 flex items-center gap-3 text-rose-900">
-              <SpinnerIcon size={18} color="#e11d48" />
+            <div className="p-4 bg-white/80 rounded-lg border border-indigo-200 flex items-center gap-3 text-indigo-900">
+              <SpinnerIcon size={18} color="#4f46e5" />
               <div className="flex flex-col">
                 <span className="text-xs font-semibold">
                   Synthesizing Multi-Speaker Handoff Audio...
                 </span>
-                <span className="text-[11px] text-rose-700/80">
+                <span className="text-[11px] text-indigo-700/80">
                   Generating Doctor &amp; Nurse voices via Split-and-Stitch PCM
                 </span>
               </div>
@@ -125,7 +125,7 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
               Your browser does not support the audio element.
             </audio>
           ) : !audioError ? (
-            <div className="p-3 bg-white/80 rounded-lg border border-pink-200 flex flex-wrap items-center justify-between gap-3">
+            <div className="p-3 bg-white/80 rounded-lg border border-indigo-200 flex flex-wrap items-center justify-between gap-3">
               <span className="text-xs text-slate-600">
                 Audio is not stored in local history. Generate audio handoff for this encounter.
               </span>
@@ -133,7 +133,7 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
                 type="button"
                 onClick={onGenerateAudio}
                 disabled={isRegeneratingAudio || isProcessing}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-pink-700 hover:bg-pink-800 disabled:opacity-50 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 transition-colors cursor-pointer"
               >
                 {isRegeneratingAudio
                   ? "Generating Audio..."
@@ -143,8 +143,8 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
           ) : null}
 
           {audioScript && (
-            <div className="mt-3 p-3 bg-white/80 rounded-lg border border-pink-200">
-              <p className="text-[11px] font-semibold text-pink-700 mb-2 uppercase tracking-wider">
+            <div className="mt-3 p-3 bg-white/80 rounded-lg border border-indigo-200">
+              <p className="text-[11px] font-semibold text-indigo-700 mb-2 uppercase tracking-wider">
                 Spoken Handoff Script
               </p>
               <div className="space-y-2.5 text-sm text-slate-700 leading-relaxed">
@@ -165,7 +165,7 @@ export const AudioHandoffCard: React.FC<AudioHandoffCardProps> = ({
                         <p key={index} className="leading-relaxed">
                           <strong
                             className={`font-semibold mr-1.5 ${
-                              isDoctor ? "text-slate-900" : "text-rose-800"
+                              isDoctor ? "text-sky-700" : "text-teal-700"
                             }`}
                           >
                             {speaker}:

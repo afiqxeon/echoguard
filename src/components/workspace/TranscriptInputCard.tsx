@@ -126,7 +126,12 @@ export const TranscriptInputCard: React.FC<TranscriptInputCardProps> = ({
               key={sample.label}
               type="button"
               onClick={() => onSelectSample(sample.text, idx)}
-              disabled={isProcessing || isEncounterLocked}
+              disabled={isProcessing || isEncounterLocked || isListening}
+              title={
+                isListening
+                  ? "Stop Live Mic Dictation before selecting a sample"
+                  : undefined
+              }
               className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${
                 isSelected
                   ? "bg-sky-100 text-sky-800 border-sky-300"
