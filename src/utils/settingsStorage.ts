@@ -1,15 +1,6 @@
-export interface VoiceOption {
-  id: string;
-  label: string;
-  tone: string;
-}
+import type { EchoGuardSettings, VoiceOption } from "../types/settings";
 
-export interface EchoGuardSettings {
-  doctorVoice: string;
-  nurseVoice: string;
-  dictationLanguage: string;
-  strictDeterministicPreFilter: boolean;
-}
+export type { EchoGuardSettings, VoiceOption };
 
 export const DOCTOR_VOICE_OPTIONS: VoiceOption[] = [
   {

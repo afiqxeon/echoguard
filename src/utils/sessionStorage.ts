@@ -1,15 +1,6 @@
-export interface ClinicalSessionRecord {
-  id: string;
-  encounterId: string;
-  createdAt: string;
-  previewTitle: string;
-  redactedTranscript: string;
-  soapNote: string;
-  handoffScript: string;
-  entitiesStripped: number;
-  doctorVoice: string;
-  nurseVoice: string;
-}
+import type { ClinicalSessionRecord } from "../types/clinical";
+
+export type { ClinicalSessionRecord };
 
 const SESSION_STORAGE_KEY = "echoguard_sessions_v1";
 const MAX_STORED_SESSIONS = 20;
