@@ -12,7 +12,7 @@ On-device **Gemini Nano** (via Firebase AI Logic) and a local deterministic reda
 
 To be fair, EchoGuard is not a full EHR system, and on-device Gemini Nano only runs in Desktop Chrome right now. On other browsers, it falls back to our local deterministic redactor so raw PII still stays on your machine.
 
-> 🔗 **Live Demo:** `[Add Live Demo URL]`  
+> 🔗 **Live Demo:** `https://echoguard-nine.vercel.app`  
 > 🎥 **3-Minute Demo Video:** `[Add YouTube / Loom URL]`
 
 ---
@@ -24,7 +24,7 @@ EchoGuard has no patient database. Everything runs through a 3-stage hybrid pipe
 1. **Local PII Shield (On-Device)**  
    Dictate via Live Mic or paste a clinical transcript. Gemini Nano (`InferenceMode.ONLY_ON_DEVICE`) and our fail-closed regex redactor strip patient names, caregiver names (`mother`, `father`, `guardian`), spoken and numeric DOBs, MRNs, insurance IDs, and phone numbers inside the browser.
 2. **Cloud SOAP Note & HL7 FHIR Export**  
-   Only the sanitized payload crosses into Cloud Gemini. You get a structured SOAP note (*Subjective, Objective, Assessment, Plan*) and a one-click **HL7 FHIR JSON** export.
+   Only the sanitized payload crosses into Cloud Gemini. You get a structured SOAP note (_Subjective, Objective, Assessment, Plan_) and a one-click **HL7 FHIR JSON** export.
 3. **Multi-Speaker Clinical Handoff (Doctor & Nurse)**  
    Busy wards run on spoken handoffs, not walls of text. EchoGuard turns the plan into a 2-speaker Doctor and Nurse audio briefing using `gemini-2.5-flash-preview-tts`, with instant `.wav` download.
 
@@ -68,10 +68,10 @@ During live mic tests, phrases like `"brought in by mother Sarah Lynn, born Sept
 
 ## Firebase Stack
 
-| Firebase Product | What It Does in EchoGuard |
-| :--- | :--- |
-| **Firebase AI Logic** | Runs the hybrid pipeline: on-device Gemini Nano (`ONLY_ON_DEVICE`), Cloud Gemini SOAP synthesis, and Gemini Flash TTS. |
-| **Firebase App Check** | Protects AI Logic and Remote Config endpoints with reCAPTCHA Enterprise (and debug tokens for local dev). |
+| Firebase Product           | What It Does in EchoGuard                                                                                                                        |
+| :------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Firebase AI Logic**      | Runs the hybrid pipeline: on-device Gemini Nano (`ONLY_ON_DEVICE`), Cloud Gemini SOAP synthesis, and Gemini Flash TTS.                           |
+| **Firebase App Check**     | Protects AI Logic and Remote Config endpoints with reCAPTCHA Enterprise (and debug tokens for local dev).                                        |
 | **Firebase Remote Config** | Dynamically serves `default_cloud_model`, `tts_model`, and `soap_system_prompt` so we can update models or clinical prompts without redeploying. |
 
 ---
@@ -88,6 +88,7 @@ During live mic tests, phrases like `"brought in by mother Sarah Lynn, born Sept
 ## Run It Locally
 
 ### Prerequisites
+
 - Docker & Docker Compose (or Node.js 20+)
 - A Firebase Project with **AI Logic**, **App Check**, and **Remote Config** enabled
 - Desktop Chrome with Built-in AI (Gemini Nano) enabled (other browsers fall back safely to deterministic local redaction)
@@ -95,7 +96,7 @@ During live mic tests, phrases like `"brought in by mother Sarah Lynn, born Sept
 ### 1. Clone & Configure `.env.local`
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/afiqxeon/echoguard
 cd echoguard
 cp .env.example .env.local
 ```
