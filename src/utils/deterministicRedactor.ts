@@ -4,17 +4,23 @@ export interface RedactionResult {
 }
 
 /**
- * Matches patient names preceded by common clinical titles or keywords.
- * Case-insensitive (/gi) to accommodate lowercase speech-to-text transcriptions.
+ * Matches patient, family, and caregiver names preceded by clinical titles or relation keywords.
+ * Case-sensitive on the name capture ([A-Z][a-z]+) so lowercase clinical verbs (e.g., "Mother reports fever")
+ * are never falsely redacted.
  */
 const PATIENT_NAME_REGEX =
-  /\b(Patient|Name|Mr\.|Mrs\.|Ms\.|Miss|Dr\.|Follow-up for)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/gi;
+  /\b((?:[Pp]atient|[Nn]ame|[Mm]r\.|[Mm]rs\.|[Mm]s\.|[Mm]iss|[Dd]r\.|[Ff]ollow-up for|[Mm]other|[Ff]ather|[Pp]arent|[Gg]uardian|[Ss]pouse|[Ww]ife|[Hh]usband|[Cc]aregiver)(?:[:,]?\s+\(?|\s*\())([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})/g;
+
+const MONTH_NAME_PATTERN =
+  "(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\.?";
 
 /**
- * Matches dates of birth with explicit labels.
+ * Matches numeric, written, and spoken dates of birth with explicit labels (including "Born" / "Born on").
  */
-const DOB_REGEX =
-  /\b(DOB|Date of Birth|Birthdate)\s*[:-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/gi;
+const DOB_REGEX = new RegExp(
+  `(\\b(?:DOB|Date of Birth|Birthdate|Birth date|Birthday|Born(?:\\s+on)?)\\s*[:-]?\\s*)(?:\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{4}[/-]\\d{1,2}[/-]\\d{1,2}|${MONTH_NAME_PATTERN}\\s+\\d{1,2}(?:st|nd|rd|th)?,?\\s+\\d{4}|\\d{1,2}(?:st|nd|rd|th)?(?:\\s+of)?\\s+${MONTH_NAME_PATTERN},?\\s+\\d{4})`,
+  "gi",
+);
 
 /**
  * Context-aware Medical Record Numbers (MRN), Insurance IDs, Policy Numbers, Member IDs, and SSNs.
@@ -55,16 +61,16 @@ export function redactPIIDeterministically(input: string): RedactionResult {
   let sanitized = input;
   let entitiesRedacted = 0;
 
-  // 1. Patient names preceded by honorifics or clinical labels
-  sanitized = sanitized.replace(PATIENT_NAME_REGEX, (_match, label) => {
+  // 1. Patient, family, and caregiver names preceded by honorifics or relation labels
+  sanitized = sanitized.replace(PATIENT_NAME_REGEX, (_match, prefix) => {
     entitiesRedacted++;
-    return `${label} [REDACTED]`;
+    return `${prefix}[REDACTED]`;
   });
 
   // 2. Dates of birth with explicit labels
-  sanitized = sanitized.replace(DOB_REGEX, (_match, label) => {
+  sanitized = sanitized.replace(DOB_REGEX, (_match, prefix) => {
     entitiesRedacted++;
-    return `${label}: [REDACTED]`;
+    return `${prefix}[REDACTED]`;
   });
 
   // 3. Contextual IDs (MRN, Insurance ID, Policy Number, Member ID, SSN)

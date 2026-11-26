@@ -1,6 +1,8 @@
 import ReactMarkdown from "react-markdown";
 import { useState, useEffect, useRef, type ChangeEvent } from "react";
 import {
+  initRemoteClinicalConfig,
+  redactPIIViaFirebaseNano,
   generateSOAPNote,
   generateMedicalAudio,
   generateMultiSpeakerAudio,
@@ -26,6 +28,7 @@ import {
   type ClinicalSessionRecord,
   loadSessions,
   saveSession,
+  updateSession,
   deleteSession,
   clearAllSessions,
 } from "./utils/sessionStorage";
@@ -214,15 +217,38 @@ export default function PIIRedactor() {
   };
 
   const handleRegenerateAudio = async () => {
-    if (!audioScript || isRegeneratingAudio) return;
+    if ((!audioScript && !soapNote) || isRegeneratingAudio) return;
     setAudioError(null);
     setIsRegeneratingAudio(true);
+    setPipelineStage("audio");
+    setEngineState("processing_audio");
+    setStatusMessage(
+      "Generating multi-speaker audio via Firebase AI Logic...",
+    );
 
     try {
-      const newAudioUrl = await generateMultiSpeakerAudio(audioScript, {
-        doctorVoice: settings.doctorVoice,
-        nurseVoice: settings.nurseVoice,
-      });
+      let newAudioUrl = "";
+      let newScript = audioScript;
+
+      if (audioScript.trim()) {
+        newAudioUrl = await generateMultiSpeakerAudio(audioScript, {
+          doctorVoice: settings.doctorVoice,
+          nurseVoice: settings.nurseVoice,
+        });
+      } else {
+        const result = await generateMedicalAudio(
+          soapNote,
+          {
+            doctorVoice: settings.doctorVoice,
+            nurseVoice: settings.nurseVoice,
+          },
+          cloudModel,
+        );
+        newAudioUrl = result.audioUrl;
+        newScript = result.script;
+        setAudioScript(newScript);
+      }
+
       if (audioUrl && audioUrl.startsWith("blob:")) {
         URL.revokeObjectURL(audioUrl);
       }
@@ -231,63 +257,21 @@ export default function PIIRedactor() {
         doctorVoice: settings.doctorVoice,
         nurseVoice: settings.nurseVoice,
       });
-    } catch (err) {
-      console.error("Failed to regenerate audio:", err);
-      setAudioError(
-        "Audio handoff model is temporarily busy. Click Retry Audio without re-running SOAP.",
-      );
-    } finally {
-      setIsRegeneratingAudio(false);
-    }
-  };
-
-  const handleRetryAudio = async () => {
-    if (!soapNote || isRegeneratingAudio) return;
-    setAudioError(null);
-    setIsRegeneratingAudio(true);
-    setPipelineStage("audio");
-    setEngineState("processing_audio");
-    setStatusMessage(
-      "Retrying multi-speaker audio via Firebase AI Logic...",
-    );
-
-    try {
-      const { audioUrl: generatedAudioUrl, script } =
-        await generateMedicalAudio(
-          soapNote,
-          {
-            doctorVoice: settings.doctorVoice,
-            nurseVoice: settings.nurseVoice,
-          },
-          cloudModel,
-        );
-      setAudioUrl(generatedAudioUrl);
-      setAudioScript(script);
-      setGeneratedVoices({
-        doctorVoice: settings.doctorVoice,
-        nurseVoice: settings.nurseVoice,
-      });
 
       if (activeSessionId) {
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === activeSessionId
-              ? {
-                  ...s,
-                  handoffScript: script,
-                  doctorVoice: settings.doctorVoice,
-                  nurseVoice: settings.nurseVoice,
-                }
-              : s,
-          ),
-        );
+        const updated = updateSession(activeSessionId, {
+          handoffScript: newScript,
+          doctorVoice: settings.doctorVoice,
+          nurseVoice: settings.nurseVoice,
+        });
+        setSessions(updated);
       }
 
       setEngineState("ready");
       setStatusMessage("Pipeline Complete: Local Shield ➔ Cloud SOAP ➔ Cloud TTS.");
       setPipelineStage("done");
     } catch (err) {
-      console.error("Retry Audio Error:", err);
+      console.error("Failed to generate audio:", err);
       setAudioError(
         "Audio handoff model is temporarily busy. Click Retry Audio without re-running SOAP.",
       );
@@ -298,10 +282,17 @@ export default function PIIRedactor() {
     }
   };
 
+  const handleRetryAudio = async () => {
+    await handleRegenerateAudio();
+  };
+
   const handleLoadSession = (record: ClinicalSessionRecord) => {
     if (audioUrl && audioUrl.startsWith("blob:")) {
       URL.revokeObjectURL(audioUrl);
     }
+    setInput("");
+    setSampleIndex(null);
+    setPipelineStage("idle");
     setAudioUrl("");
     setGeneratedVoices(null);
     setSoapError(null);
@@ -398,6 +389,29 @@ export default function PIIRedactor() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    initRemoteClinicalConfig().then((config) => {
+      if (!active) return;
+
+      // Use Remote Config default model if user hasn't manually selected one
+      const hasManualSelection = Boolean(
+        localStorage.getItem("echoguard_cloud_model"),
+      );
+      if (
+        !hasManualSelection &&
+        CLOUD_MODELS.some((m) => m.id === config.defaultCloudModel)
+      ) {
+        setCloudModel(config.defaultCloudModel as CloudModelId);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const classifySoapError = (err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
 
@@ -405,7 +419,7 @@ export default function PIIRedactor() {
       return {
         title: "Daily cloud quota reached.",
         detail:
-          "Local PII redaction is complete, but cloud SOAP synthesis is paused until the quota resets.",
+          "Local PII redaction is complete, but cloud SOAP synthesis is paused until the quota resets. Try switching the cloud model in Settings and click Regenerate SOAP.",
       };
     }
 
@@ -413,7 +427,7 @@ export default function PIIRedactor() {
       return {
         title: "Cloud model is temporarily busy.",
         detail:
-          "Your redacted payload is safe. Wait a few seconds and click Regenerate SOAP.",
+          "Your redacted payload is safe. Wait a few seconds, or try switching the cloud model in Settings and click Regenerate SOAP.",
       };
     }
 
@@ -495,15 +509,12 @@ export default function PIIRedactor() {
       });
 
       if (savedId) {
-        currentSessions = currentSessions.map((s) =>
-          s.id === savedId
-            ? {
-                ...s,
-                handoffScript: script,
-              }
-            : s,
-        );
-        setSessions(currentSessions);
+        const updated = updateSession(savedId, {
+          handoffScript: script,
+          doctorVoice: settings.doctorVoice,
+          nurseVoice: settings.nurseVoice,
+        });
+        setSessions(updated);
       }
 
       setEngineState("ready");
@@ -561,57 +572,28 @@ export default function PIIRedactor() {
     try {
       if (engineMode === "nano") {
         try {
-          const nanoSession = await (window as any).LanguageModel.create({
-            temperature: 0,
-            topK: 1,
-            expectedOutputs: [{ type: "text", languages: ["en"] }],
-            initialPrompts: [
-              {
-                role: "system",
-                content:
-                  "You are a strict PII redaction engine. Return ONLY the original text with any remaining personal identifiers (names, addresses, dates of birth, IDs, phone numbers) replaced by [REDACTED]. Do NOT add explanations, markdown, bullet points, or medical advice.",
-              },
-            ],
-          });
-
-          // Stage 1B: Semantic pass via Gemini Nano on already pre-filtered text
-          const nanoPrompt = `Redact any remaining personal identifiers in this text. Output ONLY the redacted text:\n\n${sanitizedPayload}`;
-          let nanoOutput = "";
-
-          try {
-            if (typeof nanoSession.promptStreaming === "function") {
-              const stream = nanoSession.promptStreaming(nanoPrompt, {
-                outputLanguage: "en",
-              });
-              for await (const chunk of stream) {
-                if (!firstTokenRecorded) {
-                  setTtftMs(Math.round(performance.now() - startTime));
-                  firstTokenRecorded = true;
-                }
-                nanoOutput =
-                  chunk.startsWith(nanoOutput) && nanoOutput.length > 0
-                    ? chunk
-                    : nanoOutput + chunk;
-                setRedactedText(nanoOutput);
+          // Stage 1B: Semantic pass via Gemini Nano (Firebase AI Logic ONLY_ON_DEVICE) on pre-filtered text
+          const nanoOutput = await redactPIIViaFirebaseNano(
+            sanitizedPayload,
+            (partialText) => {
+              if (!firstTokenRecorded) {
+                setTtftMs(Math.round(performance.now() - startTime));
+                firstTokenRecorded = true;
               }
-            } else {
-              nanoOutput = await nanoSession.prompt(nanoPrompt, {
-                outputLanguage: "en",
-              });
-              setTtftMs(Math.round(performance.now() - startTime));
-              setRedactedText(nanoOutput);
-            }
-          } finally {
-            if (typeof nanoSession.destroy === "function") {
-              nanoSession.destroy();
-            }
+              setRedactedText(partialText);
+            },
+          );
+
+          if (!firstTokenRecorded) {
+            setTtftMs(Math.round(performance.now() - startTime));
           }
+          setRedactedText(nanoOutput);
 
           // Stage 1C: Post-Filter safety net
           sanitizedPayload = redactPIIDeterministically(nanoOutput).redactedText;
         } catch (nanoError) {
           console.warn(
-            "Gemini Nano failed, retaining deterministic output:",
+            "Firebase AI Logic on-device Gemini Nano unavailable, retaining deterministic output:",
             nanoError,
           );
           setEngineMode("deterministic");
@@ -694,10 +676,14 @@ export default function PIIRedactor() {
   };
 
   const isProcessing = engineState.startsWith("processing");
+  const isEncounterLocked = Boolean(
+    activeSessionId || redactedText || soapNote,
+  );
   const isActionable =
     (engineMode === "nano" || engineMode === "deterministic") &&
     input.trim().length > 0 &&
-    !isProcessing;
+    !isProcessing &&
+    !isEncounterLocked;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
@@ -890,11 +876,12 @@ export default function PIIRedactor() {
             {activeSessionId && (
               <div className="mb-3 flex items-center justify-between rounded-lg bg-sky-50 border border-sky-200 px-3 py-2 text-xs text-sky-900">
                 <span>
-                  Viewing saved encounter{" "}
+                  Viewing locked encounter{" "}
                   <strong className="font-mono">
                     {sessions.find((s) => s.id === activeSessionId)?.encounterId ||
                       "ARCHIVED"}
-                  </strong>
+                  </strong>{" "}
+                  — input locked to prevent cross-patient mix-ups.
                 </span>
                 <button
                   type="button"
@@ -924,13 +911,22 @@ export default function PIIRedactor() {
               id="raw-transcript"
               ref={transcriptInputRef}
               value={input}
+              readOnly={isEncounterLocked || isProcessing}
               onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
                 setInput(e.target.value);
                 setSampleIndex(null);
               }}
               rows={4}
-              placeholder="Speak via Live Mic, type clinical notes with patient PII (name, DOB, phone, insurance ID), or select a quick sample..."
-              className="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20 resize-y"
+              placeholder={
+                isEncounterLocked
+                  ? "Encounter locked. Raw PII is never stored—click '+ New Encounter' to start a new patient."
+                  : "Speak via Live Mic, type clinical notes with patient PII (name, DOB, phone, insurance ID), or select a quick sample..."
+              }
+              className={`w-full rounded-lg border px-3.5 py-2.5 text-sm placeholder:text-slate-400 resize-y ${
+                isEncounterLocked
+                  ? "border-slate-200 bg-slate-50 text-slate-500 cursor-not-allowed focus:outline-none"
+                  : "border-slate-300 bg-white text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+              }`}
             />
 
             {isListening && interimTranscript && (
@@ -958,8 +954,8 @@ export default function PIIRedactor() {
                     onClick={() => {
                       handleSelectSample(sample.text, idx);
                     }}
-                    disabled={isProcessing}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors disabled:opacity-50 cursor-pointer ${
+                    disabled={isProcessing || isEncounterLocked}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${
                       isSelected
                         ? "bg-sky-100 text-sky-800 border-sky-300"
                         : "bg-slate-100 text-slate-600 hover:bg-sky-50 hover:text-sky-700 border-transparent hover:border-sky-200"
@@ -977,8 +973,17 @@ export default function PIIRedactor() {
                 <button
                   type="button"
                   onClick={toggleListening}
-                  disabled={isProcessing || !isMicSupported}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50 cursor-pointer ${
+                  disabled={
+                    isProcessing ||
+                    !isMicSupported ||
+                    (isEncounterLocked && !isListening)
+                  }
+                  title={
+                    isEncounterLocked
+                      ? "Click '+ New Encounter' to start a new patient consultation"
+                      : undefined
+                  }
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${
                     isListening
                       ? "bg-red-50 text-red-700 border-red-300 animate-pulse"
                       : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
@@ -1006,7 +1011,7 @@ export default function PIIRedactor() {
                   </span>
                 </button>
 
-                {input.trim().length > 0 && !isProcessing && (
+                {input.trim().length > 0 && !isProcessing && !isEncounterLocked && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1029,9 +1034,13 @@ export default function PIIRedactor() {
                 <span>
                   {isProcessing
                     ? "Running Pipeline..."
-                    : "Run Hybrid AI Pipeline"}
+                    : isEncounterLocked
+                      ? "Encounter Completed"
+                      : "Run Hybrid AI Pipeline"}
                 </span>
-                {!isProcessing && <span aria-hidden="true">→</span>}
+                {!isProcessing && !isEncounterLocked && (
+                  <span aria-hidden="true">→</span>
+                )}
               </button>
             </div>
 
@@ -1385,7 +1394,7 @@ export default function PIIRedactor() {
                 </div>
               )}
 
-              {!audioScript && pipelineStage !== "audio" ? (
+              {!soapNote && !audioScript && pipelineStage !== "audio" ? (
                 audioError ? null : (
                   <p className="text-sm text-rose-400 italic py-4">
                     Awaiting SOAP synthesis to generate Doctor &amp; Nurse audio handoff...
@@ -1411,19 +1420,18 @@ export default function PIIRedactor() {
                       controls
                       src={audioUrl}
                       className="w-full outline-none"
-                      autoPlay
                     >
                       Your browser does not support the audio element.
                     </audio>
-                  ) : (
+                  ) : !audioError ? (
                     <div className="p-3 bg-white/80 rounded-lg border border-pink-200 flex flex-wrap items-center justify-between gap-3">
                       <span className="text-xs text-slate-600">
-                        Audio is not stored in local history. Generate audio handoff for this session.
+                        Audio is not stored in local history. Generate audio handoff for this encounter.
                       </span>
                       <button
                         type="button"
                         onClick={handleRegenerateAudio}
-                        disabled={isRegeneratingAudio}
+                        disabled={isRegeneratingAudio || isProcessing}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-pink-700 hover:bg-pink-800 disabled:opacity-50 transition-colors cursor-pointer"
                       >
                         {isRegeneratingAudio
@@ -1431,7 +1439,7 @@ export default function PIIRedactor() {
                           : "▶ Generate Audio Handoff"}
                       </button>
                     </div>
-                  )}
+                  ) : null}
 
                   {audioScript && (
                     <div className="mt-3 p-3 bg-white/80 rounded-lg border border-pink-200">

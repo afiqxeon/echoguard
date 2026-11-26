@@ -67,6 +67,26 @@ export function saveSession(
   return updated;
 }
 
+export function updateSession(
+  id: string,
+  updates: Partial<
+    Omit<ClinicalSessionRecord, "id" | "encounterId" | "createdAt">
+  >,
+): ClinicalSessionRecord[] {
+  const existing = loadSessions();
+  const updated = existing.map((item) =>
+    item.id === id ? { ...item, ...updates } : item,
+  );
+
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(updated));
+  } catch (err) {
+    console.warn("Failed to update session in localStorage:", err);
+  }
+
+  return updated;
+}
+
 export function deleteSession(id: string): ClinicalSessionRecord[] {
   const updated = loadSessions().filter((item) => item.id !== id);
   try {

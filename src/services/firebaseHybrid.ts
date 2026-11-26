@@ -3,7 +3,17 @@ import {
   initializeAppCheck,
   ReCaptchaEnterpriseProvider,
 } from "firebase/app-check";
-import { getAI, getGenerativeModel, GoogleAIBackend } from "firebase/ai";
+import {
+  getAI,
+  getGenerativeModel,
+  GoogleAIBackend,
+  InferenceMode,
+} from "firebase/ai";
+import {
+  getRemoteConfig,
+  fetchAndActivate,
+  getString,
+} from "firebase/remote-config";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -29,9 +39,17 @@ for (const key of requiredEnvVars) {
 
 const app = initializeApp(firebaseConfig);
 
-// Enable Firebase App Check debug token for local and staging debugging
-(self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN =
-  import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
+// Enable Firebase App Check debug token for local development or configured debug token
+const debugToken = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN?.trim();
+if (debugToken) {
+  (
+    self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: string }
+  ).FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken;
+} else if (import.meta.env.DEV) {
+  (
+    self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean }
+  ).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+}
 
 const recaptchaSiteKey =
   import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY?.trim() ||
@@ -49,12 +67,113 @@ export const IS_MOCK_MODE = import.meta.env.VITE_ENABLE_MOCK_MODE === "true";
 const TEXT_MODEL = import.meta.env.VITE_GEMINI_TEXT_MODEL || "gemini-3.8-flash";
 const TTS_MODEL = import.meta.env.VITE_GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
 
+const DEFAULT_SOAP_PROMPT =
+  "You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.";
+
+const remoteConfig = getRemoteConfig(app);
+remoteConfig.settings.minimumFetchIntervalMillis = import.meta.env.DEV
+  ? 10_000
+  : 300_000;
+remoteConfig.defaultConfig = {
+  default_cloud_model: TEXT_MODEL,
+  tts_model: TTS_MODEL,
+  soap_system_prompt: DEFAULT_SOAP_PROMPT,
+};
+
+export interface RemoteClinicalConfig {
+  defaultCloudModel: string;
+  ttsModel: string;
+  soapSystemPrompt: string;
+  source: "remote" | "default";
+}
+
+export async function initRemoteClinicalConfig(): Promise<RemoteClinicalConfig> {
+  try {
+    await fetchAndActivate(remoteConfig);
+    return {
+      defaultCloudModel:
+        getString(remoteConfig, "default_cloud_model").trim() || TEXT_MODEL,
+      ttsModel: getString(remoteConfig, "tts_model").trim() || TTS_MODEL,
+      soapSystemPrompt:
+        getString(remoteConfig, "soap_system_prompt").trim() ||
+        DEFAULT_SOAP_PROMPT,
+      source: "remote",
+    };
+  } catch (error) {
+    console.warn("[EchoGuard RemoteConfig] Using local defaults:", error);
+    return {
+      defaultCloudModel: TEXT_MODEL,
+      ttsModel: TTS_MODEL,
+      soapSystemPrompt: DEFAULT_SOAP_PROMPT,
+      source: "default",
+    };
+  }
+}
+
+function getActiveTtsModel(): string {
+  return getString(remoteConfig, "tts_model").trim() || TTS_MODEL;
+}
+
+function getActiveSoapPrompt(): string {
+  return (
+    getString(remoteConfig, "soap_system_prompt").trim() || DEFAULT_SOAP_PROMPT
+  );
+}
+
+/**
+ * Redacts residual PII on-device using Gemini Nano via Firebase AI Logic hybrid mode.
+ */
+export async function redactPIIViaFirebaseNano(
+  rawTranscript: string,
+  onChunk?: (partialText: string) => void,
+): Promise<string> {
+  const onDeviceModel = getGenerativeModel(ai, {
+    mode: InferenceMode.ONLY_ON_DEVICE,
+    onDeviceParams: {
+      createOptions: {
+        expectedOutputs: [{ type: "text", languages: ["en"] }],
+        initialPrompts: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "text",
+                value:
+                  "You are a strict PII redaction engine. Return ONLY the original text with any remaining personal identifiers (names, addresses, dates of birth, IDs, phone numbers) replaced by [REDACTED]. Do NOT add explanations, markdown, bullet points, or medical advice.",
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  const prompt = `Replace all patient PII (names, DOB, phone, insurance/MRN IDs) with [REDACTED]. Keep all medical facts unchanged.\n\n${rawTranscript}`;
+
+  if (onChunk) {
+    const streamResult = await onDeviceModel.generateContentStream(prompt);
+    let fullText = "";
+    for await (const chunk of streamResult.stream) {
+      const chunkText = chunk.text();
+      if (chunkText) {
+        fullText += chunkText;
+        onChunk(fullText);
+      }
+    }
+    const finalResponse = await streamResult.response;
+    return finalResponse.text() || fullText;
+  }
+
+  const result = await onDeviceModel.generateContent(prompt);
+  return result.response.text();
+}
+
 /**
  * Generates a structured medical SOAP note from a PII-redacted transcript.
  */
 export async function generateSOAPNote(
   redactedTranscript: string,
-  modelName: string = "gemini-3.8-flash",
+  modelName: string = TEXT_MODEL,
 ): Promise<string> {
   if (IS_MOCK_MODE) {
     return new Promise((resolve) => {
@@ -68,7 +187,7 @@ export async function generateSOAPNote(
 
   try {
     const model = getGenerativeModel(ai, { model: modelName || TEXT_MODEL });
-    const prompt = `You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.
+    const prompt = `${getActiveSoapPrompt()}
 
 Transcript:
 ${redactedTranscript}`;
@@ -86,12 +205,78 @@ export interface SpeakerVoiceSelection {
   nurseVoice: string;
 }
 
+interface HandoffTurn {
+  voice: string;
+  text: string;
+}
+
+const PCM_SAMPLE_RATE = 24000;
+const PCM_BYTES_PER_SAMPLE = 2; // 16-bit mono linear PCM
+const SILENCE_GAP_MS = 350;
+const MAX_HANDOFF_TURNS = 2;
+const MAX_HANDOFF_CACHE_ENTRIES = 20;
+
+const handoffPcmCache = new Map<string, Uint8Array>();
+const voicePreviewPcmCache = new Map<string, Uint8Array>();
+
+function setBoundedCache<T>(
+  cache: Map<string, T>,
+  key: string,
+  value: T,
+  maxEntries: number,
+): void {
+  if (cache.has(key)) {
+    cache.delete(key);
+  } else if (cache.size >= maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      cache.delete(oldestKey);
+    }
+  }
+  cache.set(key, value);
+}
+
+/**
+ * Extracts at most two clinical handoff dialogue turns (Doctor / Nurse)
+ * to guarantee strict speaker-to-voice mapping and cap TTS quota usage.
+ */
+function parseHandoffTurns(
+  handoffScript: string,
+  voiceConfig: SpeakerVoiceSelection,
+): HandoffTurn[] {
+  const rawLines = handoffScript
+    .replace(/\r\n/g, "\n")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const labeledLines = rawLines.filter((line) =>
+    /^(doctor|nurse)\s*:/i.test(line),
+  );
+  const selectedLines = (
+    labeledLines.length > 0 ? labeledLines : rawLines
+  ).slice(0, MAX_HANDOFF_TURNS);
+
+  return selectedLines
+    .map((line, index) => {
+      const isNurse =
+        /^nurse\s*:/i.test(line) ||
+        (!/^doctor\s*:/i.test(line) && index === 1);
+
+      return {
+        voice: isNurse ? voiceConfig.nurseVoice : voiceConfig.doctorVoice,
+        text: line.replace(/^(doctor|nurse)\s*:/i, "").trim(),
+      };
+    })
+    .filter((turn) => turn.text.length > 0);
+}
+
 async function fetchSingleSpeakerPcm(
   text: string,
   voiceName: string,
 ): Promise<Uint8Array> {
   const ttsModel = getGenerativeModel(ai, {
-    model: TTS_MODEL,
+    model: getActiveTtsModel(),
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: {
@@ -99,18 +284,24 @@ async function fetchSingleSpeakerPcm(
           prebuiltVoiceConfig: { voiceName },
         },
       },
-    } as any,
+    } as Record<string, unknown>,
   });
 
   const result = await ttsModel.generateContent(text);
-  const response = result.response as any;
+  const response = result.response as {
+    inlineDataParts?: () => Array<{ inlineData?: { data?: string } }>;
+    candidates?: Array<{
+      content?: { parts?: Array<{ inlineData?: { data?: string } }> };
+    }>;
+  };
+
   const inlinePart =
     response.inlineDataParts?.()?.[0] ||
-    response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+    response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData);
 
   const base64Data = inlinePart?.inlineData?.data;
   if (!base64Data) {
-    throw new Error(`No audio data returned for voice: ${voiceName}`);
+    throw new Error(`No PCM audio data returned for voice: ${voiceName}`);
   }
 
   const binaryString = atob(base64Data);
@@ -123,7 +314,7 @@ async function fetchSingleSpeakerPcm(
 
 /**
  * Converts a clinical handoff script into multi-speaker dialogue audio
- * by generating guaranteed single-speaker voice turns in parallel and concatenating PCM segments.
+ * using Split-and-Stitch PCM synthesis (capped at 2 turns) with in-memory PCM caching.
  */
 export async function generateMultiSpeakerAudio(
   handoffScript: string,
@@ -136,49 +327,50 @@ export async function generateMultiSpeakerAudio(
     return "https://actions.google.com/sounds/v1/alarms/beep_short.ogg";
   }
 
-  // Parse script turns (Doctor: ... / Nurse: ...)
-  const lines = handoffScript
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const normalizedScript = handoffScript.replace(/\r\n/g, "\n").trim();
+  const cacheKey = `${voiceConfig.doctorVoice}|${voiceConfig.nurseVoice}|${normalizedScript}`;
+  const cachedPcm = handoffPcmCache.get(cacheKey);
+  if (cachedPcm) {
+    return pcmBytesToWavUrl(cachedPcm, PCM_SAMPLE_RATE);
+  }
 
-  const turns = lines.map((line) => {
-    if (/^nurse\s*:/i.test(line)) {
-      return {
-        voice: voiceConfig.nurseVoice,
-        text: line.replace(/^nurse\s*:/i, "").trim(),
-      };
-    }
-    return {
-      voice: voiceConfig.doctorVoice,
-      text: line.replace(/^doctor\s*:/i, "").trim(),
-    };
-  });
+  const turns = parseHandoffTurns(normalizedScript, voiceConfig);
+  if (turns.length === 0) {
+    throw new Error("Handoff script does not contain any speakable dialogue turns.");
+  }
 
-  // Generate all turns in parallel with guaranteed single-speaker voice accuracy
   const pcmSegments = await Promise.all(
     turns.map((turn) => fetchSingleSpeakerPcm(turn.text, turn.voice)),
   );
 
-  // 350ms silence gap at 24kHz, 16-bit mono (24000 * 2 bytes * 0.35s = 16800 bytes)
-  const silenceGap = new Uint8Array(16800);
+  const silenceGapBytes = Math.round(
+    PCM_SAMPLE_RATE * PCM_BYTES_PER_SAMPLE * (SILENCE_GAP_MS / 1000),
+  );
+  const silenceGap = new Uint8Array(silenceGapBytes);
+
   const totalLength =
-    pcmSegments.reduce((acc, seg) => acc + seg.length, 0) +
+    pcmSegments.reduce((acc, segment) => acc + segment.length, 0) +
     silenceGap.length * Math.max(0, pcmSegments.length - 1);
 
   const combinedPcm = new Uint8Array(totalLength);
   let offset = 0;
-  pcmSegments.forEach((seg, idx) => {
-    combinedPcm.set(seg, offset);
-    offset += seg.length;
-    if (idx < pcmSegments.length - 1) {
+  pcmSegments.forEach((segment, index) => {
+    combinedPcm.set(segment, offset);
+    offset += segment.length;
+    if (index < pcmSegments.length - 1) {
       combinedPcm.set(silenceGap, offset);
       offset += silenceGap.length;
     }
   });
 
-  // Wrap combinedPcm with WAV RIFF header
-  return pcmBytesToWavUrl(combinedPcm, 24000);
+  setBoundedCache(
+    handoffPcmCache,
+    cacheKey,
+    combinedPcm,
+    MAX_HANDOFF_CACHE_ENTRIES,
+  );
+
+  return pcmBytesToWavUrl(combinedPcm, PCM_SAMPLE_RATE);
 }
 
 const VOICE_PREVIEW_LINES: Record<string, string> = {
@@ -193,11 +385,12 @@ const VOICE_PREVIEW_LINES: Record<string, string> = {
 };
 
 /**
- * Generates an isolated single-speaker audio preview for voice selection.
+ * Generates an isolated single-speaker audio preview for voice selection,
+ * backed by an in-memory Uint8Array PCM cache to avoid redundant TTS calls.
  *
  * @param voiceName - The Gemini TTS voice profile name (e.g., "Fenrir", "Aoede").
  * @param role - The clinical role ("Doctor" or "Nurse").
- * @returns A Blob object URL for preview playback.
+ * @returns A fresh WAV Blob URL for browser audio playback.
  */
 export async function generateSingleVoicePreview(
   voiceName: string,
@@ -207,39 +400,22 @@ export async function generateSingleVoicePreview(
     return "https://actions.google.com/sounds/v1/alarms/beep_short.ogg";
   }
 
+  const cacheKey = `${role}:${voiceName}`;
+  const cachedPcm = voicePreviewPcmCache.get(cacheKey);
+  if (cachedPcm) {
+    return pcmBytesToWavUrl(cachedPcm, PCM_SAMPLE_RATE);
+  }
+
+  const sampleLine =
+    VOICE_PREVIEW_LINES[voiceName] ||
+    (role === "Doctor"
+      ? "Please obtain a stat 12-lead ECG and monitor vitals closely."
+      : "Understood, Doctor. Preparing the monitor and orders right away.");
+
   try {
-    const ttsModel = getGenerativeModel(ai, {
-      model: TTS_MODEL,
-      generationConfig: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName },
-          },
-        },
-      } as any,
-    });
-
-    const sampleLine =
-      VOICE_PREVIEW_LINES[voiceName] ||
-      (role === "Doctor"
-        ? "Please obtain a stat 12-lead ECG and monitor vitals closely."
-        : "Understood, Doctor. Preparing the monitor and orders right away.");
-
-    const result = await ttsModel.generateContent(sampleLine);
-    const response = result.response as any;
-    const inlinePart =
-      response.inlineDataParts?.()?.[0] ||
-      response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
-
-    if (inlinePart?.inlineData?.data) {
-      const mimeType = inlinePart.inlineData.mimeType || "";
-      return mimeType.includes("pcm") || mimeType.includes("L16")
-        ? pcmBase64ToWavUrl(inlinePart.inlineData.data, 24000)
-        : `data:${mimeType || "audio/wav"};base64,${inlinePart.inlineData.data}`;
-    }
-
-    throw new Error("No audio data returned from voice preview.");
+    const pcmBytes = await fetchSingleSpeakerPcm(sampleLine, voiceName);
+    voicePreviewPcmCache.set(cacheKey, pcmBytes);
+    return pcmBytesToWavUrl(pcmBytes, PCM_SAMPLE_RATE);
   } catch (error) {
     console.error("Single Voice Preview Error:", error);
     throw error;
@@ -255,7 +431,7 @@ export async function generateMedicalAudio(
     doctorVoice: "Fenrir",
     nurseVoice: "Aoede",
   },
-  modelName: string = "gemini-3.8-flash",
+  modelName: string = TEXT_MODEL,
 ): Promise<{ audioUrl: string; script: string }> {
   if (IS_MOCK_MODE) {
     return {

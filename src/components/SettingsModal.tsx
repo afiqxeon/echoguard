@@ -82,11 +82,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const audioUrl = await generateSingleVoicePreview(voiceName, role);
       const audio = new Audio(audioUrl);
       audioRef.current = audio;
-      audio.onended = () => {
-        if (audioUrl.startsWith("blob:")) {
-          URL.revokeObjectURL(audioUrl);
-        }
-      };
       await audio.play();
     } catch (err) {
       console.error(`Failed to preview ${role} voice:`, err);
