@@ -104,18 +104,25 @@ cp .env.example .env.local
 Fill in `.env.local` with your Firebase Web App credentials:
 
 ```env
-VITE_FIREBASE_API_KEY=your_api_key
+# Firebase Web App Configuration
+VITE_FIREBASE_API_KEY=your_api_key_here
 VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
 VITE_FIREBASE_PROJECT_ID=your_project_id
 VITE_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
 VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-VITE_FIREBASE_APP_ID=your_web_app_id
+VITE_FIREBASE_APP_ID=your_app_id
 
-# Firebase App Check
+# Firebase App Check (reCAPTCHA Enterprise Site Key)
 VITE_RECAPTCHA_ENTERPRISE_SITE_KEY=your_recaptcha_site_key
-VITE_APPCHECK_DEBUG_TOKEN=your_local_debug_token
 
-# Optional: test UI offline with 0 API usage
+# Optional: Localhost App Check Debug Token (Development Only)
+VITE_APPCHECK_DEBUG_TOKEN=
+
+# AI Model Configuration
+VITE_GEMINI_TEXT_MODEL=gemini-3.1-flash-lite
+VITE_GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
+
+# Runtime Feature Flags
 VITE_ENABLE_MOCK_MODE=false
 ```
 
@@ -126,7 +133,7 @@ In **Firebase Console**, enable and configure the following for your Web App:
 1. **Firebase AI Logic**: Enable **Gemini Developer API** as the AI backend provider.
 2. **Firebase App Check**: Register your Web App with **reCAPTCHA Enterprise** (and optionally add a local debug token under **Manage debug tokens** for localhost).
 3. **Firebase Remote Config**: Add and publish these 3 String parameters:
-   - `default_cloud_model`: `gemini-3.8-flash`
+   - `default_cloud_model`: `gemini-3.1-flash-lite`
    - `tts_model`: `gemini-2.5-flash-preview-tts`
    - `soap_system_prompt`: `You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.`
 
