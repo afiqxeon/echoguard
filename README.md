@@ -13,7 +13,7 @@ On-device **Gemini Nano** (via Firebase AI Logic) and a local deterministic reda
 To be fair, EchoGuard is not a full EHR system, and on-device Gemini Nano only runs in Desktop Chrome right now. On other browsers, it falls back to our local deterministic redactor so raw PII still stays on your machine.
 
 > 🔗 **Live Demo:** `https://echoguard-nine.vercel.app`  
-> 🎥 **3-Minute Demo Video:** `[Add YouTube / Loom URL]`
+> 🎥 **3-Minute Demo Video:** `https://youtu.be/k6pcg5y2g9o`
 
 ---
 
@@ -119,13 +119,16 @@ VITE_APPCHECK_DEBUG_TOKEN=your_local_debug_token
 VITE_ENABLE_MOCK_MODE=false
 ```
 
-### 2. Publish Remote Config Parameters
+### 2. Configure Firebase Services
 
-In **Firebase Console → Remote Config**, add and publish these 3 String parameters:
+In **Firebase Console**, enable and configure the following for your Web App:
 
-- `default_cloud_model`: `gemini-3.8-flash`
-- `tts_model`: `gemini-2.5-flash-preview-tts`
-- `soap_system_prompt`: `You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.`
+1. **Firebase AI Logic**: Enable **Gemini Developer API** as the AI backend provider.
+2. **Firebase App Check**: Register your Web App with **reCAPTCHA Enterprise** (and optionally add a local debug token under **Manage debug tokens** for localhost).
+3. **Firebase Remote Config**: Add and publish these 3 String parameters:
+   - `default_cloud_model`: `gemini-3.8-flash`
+   - `tts_model`: `gemini-2.5-flash-preview-tts`
+   - `soap_system_prompt`: `You are a strict clinical documentation assistant. Convert the following PII-redacted transcript into a highly structured medical SOAP note (Subjective, Objective, Assessment, Plan). Do not invent any patient identifiers.`
 
 ### 3. Start the App
 
@@ -153,6 +156,16 @@ docker compose exec web sh -c "npm run lint && npm run build"
 # Local Node
 npm run lint && npm run build
 ```
+
+---
+
+## Deploy to Vercel
+
+1. Import this repository into **Vercel** (Framework Preset: **Vite**, Build Command: `npm run build`, Output Directory: `dist`).
+2. Add the same `VITE_FIREBASE_*` and `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` environment variables from `.env.local` into **Vercel → Project Settings → Environment Variables** (omit `VITE_APPCHECK_DEBUG_TOKEN` in production).
+3. Add your production `*.vercel.app` domain to:
+   - **Firebase Console → Authentication → Settings → Authorized domains**
+   - **Google Cloud Console → reCAPTCHA Enterprise → Allowed domains**
 
 ---
 
